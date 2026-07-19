@@ -1,0 +1,11 @@
+streamlit
+python-dotenv
+pandas
+chromadb
+sentence-transformers
+scikit-learn
+google-genai
+rank-bm25
+groq
+pydantic>=2.12.5,<3
+google-auth>=2.48.1,<3
