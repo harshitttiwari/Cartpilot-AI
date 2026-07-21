@@ -2,28 +2,26 @@
 import streamlit as st
 import time
 from datetime import datetime
-from bot_logic import get_ai_response, calculate_interest_score
+from bot_logic import get_ai_response, calculate_interest_score, parse_intent_with_llm
 from database import DATA_FILE_PATH
+from log import log_embedding_generated, log_vector_search
 from session_memory import (
     build_memory_context,
     build_order_confirmation_message,
     initialize_session_memory,
     record_turn,
     register_shown_items,
+    sync_shown_items_from_response,
     update_state_from_user_message,
 )
 
 CART_MUTATING_ACTIONS = {"ADD_TO_CART", "REMOVE_ITEM", "CHECKOUT"}
-
-# Below this, a "top match" is noise, not a real recommendation — don't
-# register it as last_recommendations and don't report it as if it were
-# meaningful in the analytics sidebar. Tune this against your own corpus if
-# search scores run differently for you.
-RELEVANCE_THRESHOLD = 0.30
-
-# Only these actions represent the user actually asking about the menu.
-# Chit-chat ("hello", "okayy good", "thanks") gets no search at all.
 MENU_RELEVANT_ACTIONS = {"VIEW_MENU", "ASK_ALLERGEN", "COMPARE_ITEMS"}
+
+# Relevance thresholds. Below these a top match is noise, not a real
+# recommendation. Tune against your own corpus if scores run differently.
+RELEVANCE_THRESHOLD = 0.30
+KEYWORD_OVERLAP_THRESHOLD = 0.34
 
 
 # ----------------- Context Building Helpers -----------------
@@ -132,12 +130,6 @@ def _categorize_items(items, request_types):
 
 # ----------------- UI Rendering -----------------
 
-CART_MUTATING_ACTIONS = {"ADD_TO_CART", "REMOVE_ITEM", "CHECKOUT"}
-
-# Below this, a match is treated as noise rather than a real recommendation.
-RELEVANCE_THRESHOLD = 0.30
-KEYWORD_OVERLAP_THRESHOLD = 0.34
-
 
 def _keyword_overlap_score(prompt, item_metadata):
     """
@@ -162,7 +154,6 @@ def _keyword_overlap_score(prompt, item_metadata):
 
 def render_chat_interface(container):
     with container:
-        st.header("Conversational Agent")
 
         initialize_session_memory()
 
@@ -172,8 +163,10 @@ def render_chat_interface(container):
         if not st.session_state.chat_history:
             st.session_state.chat_history.append({
                 "role": "assistant",
-                "content": "Welcome to FoodieBot! Ask me about menu items, recommendations, allergens, or drinks.",
+                "content": "Welcome to Foodie Assistant Bot! Ask me about menu items, recommendations, allergens, or drinks.",
             })
+        else:
+            st.session_state.chat_history[0]["content"] = "Welcome to Foodie Assistant Bot! Ask me about menu items, recommendations, allergens, or drinks."
 
         if "interest_score" not in st.session_state:
             st.session_state.interest_score = 50
@@ -184,11 +177,14 @@ def render_chat_interface(container):
         if "query_log" not in st.session_state:
             st.session_state.query_log = []
 
-        chat_history_container = st.container(height=520, border=True)
+        chat_history_container = st.container(height=520)
 
         with chat_history_container:
-            for msg in st.session_state.chat_history:
-                with st.chat_message(msg["role"]):
+            # Render only the last 50 messages to prevent UI slowdown on long
+            # sessions. Full history stays in session_state for LLM context.
+            for msg in st.session_state.chat_history[-50:]:
+                avatar_icon = "🤖" if msg["role"] == "assistant" else "👤"
+                with st.chat_message(msg["role"], avatar=avatar_icon):
                     st.markdown(msg["content"])
 
         if prompt := st.chat_input("Ask me about the menu..."):
@@ -198,110 +194,125 @@ def render_chat_interface(container):
 
             with st.spinner("Thinking..."):
                 start = time.time()
+                api_success = False
 
-                # STEP 1: Intent -> Reference resolution -> Action.
-                # Resolves against last turn's last_recommendations, mutates
-                # the cart in code if confident enough. Must run BEFORE any
-                # new search so a fresh search never clobbers the list being
-                # resolved against.
-                resolved_action = update_state_from_user_message(prompt)
-                action_type = resolved_action["action"]
+                # STEP 1: Attempt to call FastAPI REST Backend Server first
+                try:
+                    import requests
+                    res = requests.post(
+                        "http://127.0.0.1:8000/api/chat",
+                        json={"user_input": prompt, "session_id": "streamlit_session"},
+                        timeout=5.0
+                    )
+                    if res.status_code == 200:
+                        data = res.json()
+                        response = data["bot_response"]
+                        action_type = data["action"]
+                        st.session_state.interest_score = data["interest_score"]
+                        duration = data["latency_ms"] / 1000.0
+                        top_match = "FastAPI Backend"
+                        match_score = 1.0
+                        api_success = True
+                except Exception:
+                    api_success = False
 
-                # STEP 2: Run hybrid search for anything that isn't a cart
-                # mutation (already resolved above). This includes GENERAL
-                # turns like "i am having fever" — real recommendations can
-                # come out of those too, so they must not be skipped.
-                search_results = None
-                top_relevance = 0.0
-                keyword_signal = 0.0
+                # STEP 2: Fallback to direct Python pipeline if FastAPI server is offline
+                if not api_success:
+                    parsed_intent = parse_intent_with_llm(st.session_state.llm, prompt)
+                    resolved_action = update_state_from_user_message(prompt, parsed_intent=parsed_intent)
+                    action_type = resolved_action["action"]
 
-                should_search = action_type not in CART_MUTATING_ACTIONS
+                    should_search = action_type not in CART_MUTATING_ACTIONS
+                    search_results = None
+                    top_relevance = 0.0
+                    keyword_signal = 0.0
 
-                if should_search:
-                    search_results = _hybrid_search(prompt)
+                    if should_search:
+                        search_prompt = parsed_intent.cleaned_search_query or prompt
+                        search_results = _hybrid_search(search_prompt, parsed_intent=parsed_intent)
+                        if (
+                            search_results
+                            and search_results.get("metadatas")
+                            and search_results["metadatas"][0]
+                        ):
+                            top_relevance = 1 - search_results["distances"][0][0]
+                            keyword_signal = _keyword_overlap_score(
+                                prompt, search_results["metadatas"][0][0]
+                            )
+
+                    duration = time.time() - start
+                    is_relevant_match = (
+                        top_relevance >= RELEVANCE_THRESHOLD
+                        or keyword_signal >= KEYWORD_OVERLAP_THRESHOLD
+                    )
+
+                    if not is_relevant_match and not resolved_action["needs_clarification"]:
+                        prev_recs = st.session_state.session_memory.get(
+                            "order", {}
+                        ).get("last_recommendations", [])
+                        if len(prev_recs) == 1:
+                            st.session_state.session_memory["order"][
+                                "last_recommended_item"
+                            ] = prev_recs[0]
+
                     if (
-                        search_results
-                        and search_results.get("metadatas")
-                        and search_results["metadatas"][0]
+                        is_relevant_match
+                        and not resolved_action["needs_clarification"]
+                        and action_type not in CART_MUTATING_ACTIONS
                     ):
-                        top_relevance = 1 - search_results["distances"][0][0]
-                        keyword_signal = _keyword_overlap_score(
-                            prompt, search_results["metadatas"][0][0]
+                        register_shown_items(search_results["metadatas"][0])
+
+                    if resolved_action["needs_clarification"]:
+                        response = resolved_action["clarification_message"]
+                    elif resolved_action["cart_changed"]:
+                        response = build_order_confirmation_message(action=action_type)
+                        if action_type == "ADD_TO_CART":
+                            pairing = _suggest_pairing(resolved_action)
+                            if pairing:
+                                response += pairing["text"]
+                                register_shown_items([pairing["metadata"]])
+                    elif should_search and not is_relevant_match:
+                        context = (
+                            "Specific nutrition parameters (like exact sugar grams or recipe ingredients) "
+                            "are not listed in the menu dataset. Gently inform the user and suggest "
+                            "naturally low-sugar or healthy categories like Salads & Healthy Options or unsweetened Beverages."
+                        )
+                        memory_context = build_memory_context()
+                        recent_history = st.session_state.chat_history[-6:]
+                        response = get_ai_response(
+                            st.session_state.llm, prompt, recent_history, context, memory_context,
+                        )
+                    else:
+                        context = _build_enhanced_context(prompt, search_results)
+                        memory_context = build_memory_context()
+                        recent_history = st.session_state.chat_history[-6:]
+                        response = get_ai_response(
+                            st.session_state.llm,
+                            prompt,
+                            recent_history,
+                            context,
+                            memory_context,
                         )
 
-                duration = time.time() - start
+                    sync_shown_items_from_response(response)
 
-                # Combine the (approximate, occasionally noisy) vector score
-                # with the (deterministic) keyword-overlap score. Either one
-                # clearing its bar is enough to call the match relevant.
-                is_relevant_match = (
-                    top_relevance >= RELEVANCE_THRESHOLD
-                    or keyword_signal >= KEYWORD_OVERLAP_THRESHOLD
-                )
-
-                # Register recommendations whenever real, relevant items were
-                # actually shown — regardless of what classify_action guessed
-                # the intent was. A "GENERAL" message can still surface real
-                # recommendations, and those must be remembered the same as
-                # an explicit "show me options" turn, or ordinal/pronoun
-                # references to them ("order the first one") will fail later.
-                if (
-                    is_relevant_match
-                    and not resolved_action["needs_clarification"]
-                    and action_type not in CART_MUTATING_ACTIONS
-                ):
-                    register_shown_items(search_results["metadatas"][0])
-
-                # STEP 3: Decide the response.
-                if resolved_action["needs_clarification"]:
-                    response = resolved_action["clarification_message"]
-
-                elif resolved_action["cart_changed"]:
-                    # Deterministic — LLM never narrates cart state.
-                    response = build_order_confirmation_message(action=action_type)
-
-                elif should_search and not is_relevant_match:
-                    # Nothing in the menu was actually relevant — let the LLM
-                    # handle it conversationally rather than treating a weak
-                    # match as if it meant something.
-                    context = "No relevant menu items found for this message."
-                    memory_context = build_memory_context()
-                    recent_history = st.session_state.chat_history[-6:]
-                    response = get_ai_response(
-                        st.session_state.llm, prompt, recent_history, context, memory_context,
-                    )
-
-                else:
-                    context = _build_enhanced_context(prompt, search_results)
-                    memory_context = build_memory_context()
-                    recent_history = st.session_state.chat_history[-6:]
-                    response = get_ai_response(
-                        st.session_state.llm,
+                    st.session_state.interest_score = calculate_interest_score(
                         prompt,
-                        recent_history,
-                        context,
-                        memory_context,
+                        st.session_state.interest_score,
+                        resolved_action=resolved_action,
+                        search_shown=is_relevant_match,
                     )
+
+                    if search_results and is_relevant_match:
+                        top_match = search_results["metadatas"][0][0].get("name", "N/A")
+                        match_score = top_relevance
+                    else:
+                        top_match = "No menu match"
+                        match_score = 0.0
 
             record_turn("assistant", response)
             st.session_state.chat_history.append({"role": "assistant", "content": response})
-
-            # STEP 4: Combined interest score — phrase-based tone signal +
-            # action-based outcome signal (resolved_action carries whether a
-            # cart change actually happened).
-            st.session_state.interest_score = calculate_interest_score(
-                prompt,
-                st.session_state.interest_score,
-                resolved_action=resolved_action,
-            )
             st.session_state.interest_history.append(st.session_state.interest_score)
-
-            if search_results and is_relevant_match:
-                top_match = search_results["metadatas"][0][0].get("name", "N/A")
-                match_score = top_relevance
-            else:
-                top_match = "No menu match"
-                match_score = 0.0
 
             st.session_state.query_log.append({
                 "timestamp": datetime.now().strftime("%H:%M:%S"),
@@ -314,11 +325,82 @@ def render_chat_interface(container):
 
             st.rerun()
 
+# ----------------- Complementary Pairing -----------------
+
+def _suggest_pairing(resolved_action):
+    """After a successful ADD_TO_CART, dynamically find a complementary item.
+
+    Uses vector search to find the highest-ranking item from a different category
+    that isn't already in the user's cart (e.g., pairing a pizza with a drink or side).
+    Zero hardcoded category dictionaries needed.
+    """
+    try:
+        order = st.session_state.session_memory["order"]
+        cart = order.get("selected_items", [])
+        if not cart:
+            return None
+
+        # Get the most recently added item
+        last_added = cart[-1]
+        product_id = str(last_added["product_id"])
+        df = st.session_state.df
+        match = df[df["product_id"].astype(str) == product_id]
+        if match.empty:
+            return None
+
+        row = match.iloc[0]
+        item_name = row["name"]
+        item_category = (row.get("category") or "").lower()
+
+        # Collect categories already present in cart
+        cart_categories = {item_category}
+        for ci in cart:
+            cid = str(ci["product_id"])
+            cm = df[df["product_id"].astype(str) == cid]
+            if not cm.empty:
+                cart_categories.add((cm.iloc[0].get("category") or "").lower())
+
+        # Vector search using the item name to find flavor-compatible pairings
+        search_results = _hybrid_search(item_name, top_k=10)
+        if not search_results or not search_results.get("metadatas") or not search_results["metadatas"][0]:
+            return None
+
+        # Pick the top result whose category is NOT in the cart
+        for meta in search_results["metadatas"][0]:
+            result_category = (meta.get("category") or "").lower()
+            result_id = str(meta.get("product_id"))
+
+            # Skip items already in cart or from the same category
+            if result_category in cart_categories or any(str(ci["product_id"]) == result_id for ci in cart):
+                continue
+
+            price = "Price N/A"
+            try:
+                price = f"${float(meta.get('price')):.2f}"
+            except Exception:
+                pass
+
+            text = (
+                f"\n\n---\n"
+                f"**🍽️ Goes great with your order:**\n\n"
+                f"• {meta.get('name', 'N/A')} — {price}\n"
+                f"  Category: {meta.get('category', 'N/A')}\n\n"
+                f"_Say \"add it\" to add this to your cart!_"
+            )
+            return {"text": text, "metadata": meta}
+
+        return None
+    except Exception:
+        return None
+
+
 # ----------------- Hybrid Search -----------------
 
-def _hybrid_search(prompt, top_k=10):
-    preferred_categories = _preferred_categories_for_query(prompt)
+def _hybrid_search(prompt, top_k=10, parsed_intent=None):
+    preferred_categories = _preferred_categories_for_query(prompt, parsed_intent=parsed_intent)
+
     avoid_items = _items_to_avoid_for_query(prompt)
+    log_embedding_generated(prompt, dim=384)
     query_embedding = st.session_state.embedder.encode(
         [prompt], show_progress_bar=False
     ).tolist()
@@ -367,29 +449,22 @@ def _hybrid_search(prompt, top_k=10):
         ),
     )[:top_k]
 
+    top_relevance = ranked_items[0]["score"] if ranked_items else 0.0
+    log_vector_search(prompt, len(ranked_items), top_relevance)
+
     return {
         "metadatas": [[item["metadata"] for item in ranked_items]],
-        "distances": [[1 - item["score"] for item in ranked_items]],
+        # Category and BM25 bonuses can push combined scores above 1.0,
+        # which makes distances negative and match_score display > 100%.
+        # Clamp here so downstream threshold checks stay in [0, 1].
+        "distances": [[max(0.0, min(1.0, 1 - item["score"])) for item in ranked_items]],
     }
 
 
-def _preferred_categories_for_query(prompt):
-    query = prompt.lower()
-    category_keywords = {
-        "beverages":              ["drink", "beverage", "thirsty", "cooling", "refreshing", "refresher", "lemonade", "shake", "smoothie"],
-        "breakfast items":        ["breakfast", "morning", "muffin", "toast", "waffle"],
-        "desserts":               ["dessert", "sweet", "cake", "cookie", "sundae", "mousse", "brownie"],
-        "pizza":                  ["pizza"],
-        "burgers":                ["burger"],
-        "salads & healthy options": ["salad", "healthy", "greens"],
-        "tacos & wraps":          ["taco", "wrap"],
-        "sides & appetizers":     ["side", "appetizer", "fries", "rings", "snack"],
-    }
-    return [
-        category
-        for category, keywords in category_keywords.items()
-        if any(keyword in query for keyword in keywords)
-    ]
+def _preferred_categories_for_query(prompt, parsed_intent=None):
+    if parsed_intent and parsed_intent.category_preference:
+        return [parsed_intent.category_preference.lower()]
+    return []
 
 
 def _matches_preferred_category(metadata, preferred_categories):
@@ -475,7 +550,7 @@ def render_admin_panel():
                     st.write("Missing core values:")
                     st.json(analysis["missing_core_values"])
 
-        df = st.data_editor(st.session_state.df, num_rows="dynamic", use_container_width=True)
+        df = st.data_editor(st.session_state.df, num_rows="dynamic", width="stretch")
         if st.button("Save to CSV"):
             try:
                 df.to_csv(DATA_FILE_PATH, index=False)

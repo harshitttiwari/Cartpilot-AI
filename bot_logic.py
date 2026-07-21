@@ -54,6 +54,9 @@ def initialize_llm():
     )
 
 
+from log import log_llm_provider, log_llm_failover, log_intent_parsed, log_interest_score
+
+
 class _DualProviderAdapter:
     """
     Tries Gemini first. On quota / rate-limit errors (429 / RESOURCE_EXHAUSTED)
@@ -74,13 +77,14 @@ class _DualProviderAdapter:
                     contents=prompt,
                     config={"temperature": 0.2},
                 )
+                log_llm_provider("Gemini Flash", self.gemini_model)
                 return SimpleNamespace(content=getattr(response, "text", ""))
             except Exception as e:
                 error_str = str(e)
                 if _is_quota_error(error_str):
-                    pass
+                    log_llm_failover("Gemini Flash", "Groq Llama 3.3", "Quota Exceeded (429)")
                 else:
-                    pass
+                    log_llm_failover("Gemini Flash", "Groq Llama 3.3", error_str)
 
         if self.groq_client:
             try:
@@ -90,12 +94,81 @@ class _DualProviderAdapter:
                     temperature=0.2,
                     max_tokens=1024,
                 )
+                log_llm_provider("Groq Llama 3.3", self.groq_model)
                 text = completion.choices[0].message.content or ""
                 return SimpleNamespace(content=text)
             except Exception as groq_err:
                 raise RuntimeError(f"Both providers failed. Groq error: {groq_err}")
 
-        raise RuntimeError("No LLM provider available.")
+import json
+from typing import Literal, List, Optional
+from pydantic import BaseModel, Field
+
+
+class ParsedUserIntent(BaseModel):
+    action: Literal["VIEW_MENU", "ADD_TO_CART", "REMOVE_ITEM", "CHECKOUT", "ASK_ALLERGEN", "COMPARE_ITEMS", "GENERAL"] = "GENERAL"
+    dietary_restrictions: List[str] = Field(default_factory=list)
+    category_preference: Optional[str] = None
+    target_reference: Optional[str] = None
+    quantity: int = 1
+    cleaned_search_query: str = ""
+
+
+def parse_intent_with_llm(llm, user_text: str) -> ParsedUserIntent:
+    """
+    Dynamically parses user input using the LLM into a structured Pydantic schema.
+    Handles any typos ("suger", "ingidwnints"), slang, Hindi/Urdu, or complex phrasing
+    without a single hardcoded keyword list.
+    """
+    if not user_text or not user_text.strip():
+        return ParsedUserIntent()
+
+    prompt = f"""
+You are an expert NLP Intent Parser for a restaurant chatbot called FoodieBot.
+Analyze the user's message and return a JSON object matching this schema:
+
+{{
+  "action": "VIEW_MENU" | "ADD_TO_CART" | "REMOVE_ITEM" | "CHECKOUT" | "ASK_ALLERGEN" | "COMPARE_ITEMS" | "GENERAL",
+  "dietary_restrictions": ["soy", "gluten", "dairy", "nuts", "egg", "fish", "sesame", "zero-sugar", "vegan", "vegetarian"],
+  "category_preference": "burgers" | "pizza" | "tacos & wraps" | "salads & healthy options" | "beverages" | "sides & appetizers" | "desserts" | "fried chicken" | null,
+  "target_reference": string or null (e.g. "1st", "2nd", "pizza", "that one", "last item"),
+  "quantity": integer (default 1),
+  "cleaned_search_query": string (corrected search query fixing any typos, e.g. "zero suger" -> "zero sugar healthy options")
+}}
+
+Rules:
+1. "action":
+   - "VIEW_MENU": user wants recommendations, browsing, asking what food exists, cravings, or asking for details/description of an item ("tell about this item", "describe the 1st option", "something spicy", "hungry").
+   - "ADD_TO_CART": user explicitly wants to add/order a specific item or position ("add the 2nd", "I'll take the pizza", "order the fish taco").
+   - "REMOVE_ITEM": user wants to remove an item from cart ("remove the 1st", "delete pizza").
+   - "CHECKOUT": user wants to finalize, pay, or complete order ("checkout", "pay now", "order it", "place order").
+   - "ASK_ALLERGEN": user asks about allergens, ingredients, or safety ("does it have nuts", "gluten free").
+   - "COMPARE_ITEMS": user asks to compare two items.
+   - "GENERAL": greetings, small talk, vague questions ("hello", "how are you").
+
+2. Fix any typos in "cleaned_search_query" (e.g. "suger" -> "sugar", "ingidwnints" -> "ingredients").
+
+User Message: "{user_text}"
+
+Return ONLY valid JSON with no markdown block or additional text:
+"""
+    try:
+        response = llm.invoke(prompt)
+        text = getattr(response, "content", "").strip()
+        # Clean json backticks if model wrapped in markdown
+        if text.startswith("```"):
+            text = text.split("\n", 1)[-1].rsplit("\n", 1)[0].strip()
+            if text.startswith("json"):
+                text = text[4:].strip()
+        data = json.loads(text)
+        intent = ParsedUserIntent(**data)
+        log_intent_parsed(intent.action, intent.cleaned_search_query or user_text)
+        return intent
+    except Exception:
+        # Graceful fallback: return default intent
+        intent = ParsedUserIntent(cleaned_search_query=user_text)
+        log_intent_parsed(intent.action, intent.cleaned_search_query or user_text)
+        return intent
 
 
 def _is_quota_error(error_str: str) -> bool:
@@ -126,8 +199,11 @@ def get_ai_response(llm, user_input, chat_history, context, memory_context=""):
     )
 
     prompt = f"""
-You are FoodieBot, a professional restaurant assistant. Follow these rules:
+You are FoodieBot, a warm, polite, and knowledgeable gourmet restaurant concierge. Your tone is welcoming, hospitable, concise, and helpful. Follow these rules:
 
+- Gracefully handle informal language, minor typos, slang, and multilingual queries by providing clear, hospitable menu guidance.
+- When asked to pick or compare specific options from previous suggestions, directly name the single top matching item and briefly explain why, instead of re-listing multiple items.
+- When asked to describe or elaborate on a specific item (e.g., "tell about this item", "describe this dish"), write a warm 2-3 sentence conversational overview explaining its flavor profile, key ingredients, and appeal, rather than just re-listing raw bullet points.
 - NEVER use internal reasoning phrases like "Based on your request" or "I would recommend".
 - NEVER output any internal scores, numbers, or system metrics in your response.
 - Use bullet points (•) to list items. Show prices as $X.XX, include calories, category, allergens if known.
@@ -141,7 +217,7 @@ You are FoodieBot, a professional restaurant assistant. Follow these rules:
 - Use the CONTEXT to answer questions. If the user asks if an item is healthy, light, or heavy, use its calorie count and ingredients to respond (e.g., "It has 610 calories and is fried, so it's an indulgent option"). If the user compares items, you may do so.
 - If the user's request is contradictory, missing critical information, or unclear, politely ask ONE clarifying question before attempting to answer.
 - When the user asks for a holistic recommendation based on their preferences, carefully review the SESSION MEMORY and the conversation to identify their stated dietary restrictions, likes, and dislikes, and suggest the single best matching item from the menu.
-- Only say "I don't have that information" if the CONTEXT truly lacks the required data.
+- If exact parameters (like sugar grams or specific recipe steps) are not in the CONTEXT, answer conversationally using available menu items and categories (e.g., recommend Salads, Unsweetened Beverages, or light options) instead of giving abrupt non-answers.
 
 {memory_context}
 
@@ -163,7 +239,7 @@ Respond as FoodieBot.
             return "I'm sorry, I didn't quite catch that. Could you please rephrase your request?"
         return _clean_response(content)
     except Exception as e:
-        return f"Sorry, I'm having a technical issue and can't respond right now. Error: {e}"
+        return f"Sorry, I'm having a technical issue right now: {e}"
 
 
 # ---------------------------------------------------------------------------
@@ -206,7 +282,18 @@ def _clean_response(response):
 
     response = re.sub(r'(?i)\b(interest\s*)?score\s*:?\s*\d+\b', '', response)
     response = re.sub(r'\n\s*\n\s*\n', '\n\n', response)
-    return response.strip()
+
+    # Ensure single newlines in item detail lines (Calories, Category, Allergens)
+    # end with two spaces so Streamlit Markdown does not collapse them into one line.
+    lines = response.split("\n")
+    cleaned_lines = []
+    for line in lines:
+        stripped = line.rstrip()
+        if any(keyword in stripped for keyword in ["Calories:", "Category:", "Allergens:", "•"]):
+            cleaned_lines.append(stripped + "  ")
+        else:
+            cleaned_lines.append(stripped)
+    return "\n".join(cleaned_lines).strip()
 
 
 # ---------------------------------------------------------------------------
@@ -214,12 +301,12 @@ def _clean_response(response):
 # ---------------------------------------------------------------------------
 
 ACTION_SCORE_DELTAS = {
-    "VIEW_MENU": 5,
-    "ASK_ALLERGEN": 8,
-    "COMPARE_ITEMS": 10,
-    "ADD_TO_CART": 30,
-    "REMOVE_ITEM": -10,
-    "CHECKOUT": 40,
+    "VIEW_MENU": 3,
+    "ASK_ALLERGEN": 4,
+    "COMPARE_ITEMS": 5,
+    "ADD_TO_CART": 15,
+    "REMOVE_ITEM": -8,
+    "CHECKOUT": 20,
     "GENERAL": 0,
 }
 
@@ -238,10 +325,22 @@ def _has_negation(text):
 
 
 def _phrase_based_score(user_input, score):
-    """Tone/sentiment layer. Kept intentionally small — do not keep adding
-    more phrasings here; that's what the action-based layer is for."""
+    """Tone/sentiment layer.
+
+    Only two explicit override tiers remain — unambiguous hard negations that
+    the ML model might still score as mildly positive. Everything else
+    (affirmatives, mild positives, neutral queries) is delegated to
+    predict_intent so new phrasings are handled automatically.
+    """
     lowered = user_input.lower()
 
+    # Greetings / Small-talk should never penalize initial score below baseline 50
+    greeting_patterns = [r"\b(hello|hi|hey|hanji|hnji|namaste|good morning|good evening)\b", r"\bwhat'?s happening\b"]
+    if any(re.search(p, lowered) for p in greeting_patterns) and score <= 50:
+        return 50
+
+    # These phrases unambiguously cancel or refuse an action. Keep them as
+    # hard overrides so a fragile model confidence can't flip them.
     negative_action_phrases = [
         "do not add", "don't add", "dont add", "didnt add", "didn't add",
         "do not order", "don't order", "dont order", "cancel that",
@@ -251,14 +350,6 @@ def _phrase_based_score(user_input, score):
         "no thanks", "not interested", "don't want", "dont want", "not now",
         "maybe later", "leave it", "different item",
     ]
-    strong_order_phrases = [
-        "add it", "add this", "add that", "place order", "order it",
-        "order this", "i'll take", "i will take", "checkout",
-    ]
-    positive_phrases = [
-        "yes", "sure", "okay", "ok", "sounds good", "looks good",
-        "looks great", "love", "perfect", "want",
-    ]
 
     if any(phrase in lowered for phrase in negative_action_phrases):
         return score - 18
@@ -267,25 +358,15 @@ def _phrase_based_score(user_input, score):
         return score - 10
 
     has_negation = _has_negation(lowered)
+    # A contrast word reverses the scope of the negation:
+    # "I don't like spicy but add it anyway" is still a genuine order.
+    has_contrast = bool(re.search(r'\bbut\b|\bhowever\b|\banyway\b|\bstill\b', lowered))
 
-    # Negation guard: a "positive" phrase inside a negated sentence
-    # ("didnt add it", "you didn't add it") must NOT score as positive.
-    matches_strong_order = any(phrase in lowered for phrase in strong_order_phrases)
-    matches_positive = any(phrase in lowered for phrase in positive_phrases)
-
-    if has_negation and (matches_strong_order or matches_positive):
-        # Negated positive phrase — treat as mild negative, not a reward.
-        return score - 6
-
-    if has_negation:
+    if has_negation and not has_contrast:
         return score - 8
 
-    if matches_strong_order:
-        return score + 10
-
-    if matches_positive:
-        return score + 4
-
+    # Delegate everything else — positive orders, affirmatives, neutral queries
+    # — to the trained intent model.
     try:
         intent, confidence = predict_intent(user_input)
         if intent == "positive" and confidence >= 0.5:
@@ -295,17 +376,7 @@ def _phrase_based_score(user_input, score):
         elif intent == "neutral" and score > 50:
             return score - 1
     except Exception:
-        keywords_boost = {
-            10: ["add it", "order it", "i'll take", "yes add", "place order"],
-            4:  ["want", "get", "take", "perfect", "love", "great", "good"],
-            3:  ["hungry", "starving", "craving"],
-            -10: ["no thanks", "not interested", "don't want", "different", "exit"],
-        }
-        for boost, words in keywords_boost.items():
-            if any(word in lowered for word in words):
-                return score + boost
-                break
-
+        pass
     return score
 
 
@@ -324,13 +395,22 @@ def _action_based_score(resolved_action, score):
     return score + delta
 
 
-def calculate_interest_score(user_input, current_score, resolved_action=None):
+def calculate_interest_score(user_input, current_score, resolved_action=None, search_shown=False):
     """
     Combined score: phrase-based tone signal + action-based outcome signal.
     Pass `resolved_action` (the dict from update_state_from_user_message())
+    and `search_shown` (True when a relevant search result was returned)
     through from ui_components.py.
     """
     score = current_score
     score = _phrase_based_score(user_input, score)
     score = _action_based_score(resolved_action, score)
-    return max(0, min(100, score))
+    # If relevant items were surfaced but the action stayed GENERAL (e.g.
+    # "i think some spicy" doesn't match any VIEW_MENU keyword), add a
+    # small nudge so genuine menu exploration is reflected in the score.
+    if search_shown and resolved_action and resolved_action.get("action") == "GENERAL":
+        score += 3
+    final_score = max(0, min(100, score))
+    action_name = resolved_action.get("action", "GENERAL") if isinstance(resolved_action, dict) else "GENERAL"
+    log_interest_score(current_score, final_score, action_name)
+    return final_score

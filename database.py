@@ -5,6 +5,7 @@ import chromadb
 from sentence_transformers import SentenceTransformer
 from rank_bm25 import BM25Okapi
 from data_pipeline import load_and_process_menu_data
+from interest_model import _load_encoder
 
 DATA_FILE_PATH = "fast_food_products.csv"
 
@@ -35,7 +36,7 @@ def initialize_services():
         return None, None, None, None, None, None
 
     try:
-        embedder = SentenceTransformer("all-MiniLM-L6-v2")
+        embedder = _load_encoder()
     except Exception as e:
         st.error(f"Failed to load embedding model: {e}")
         return None, None, None, None, None, None

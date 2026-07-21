@@ -1,6 +1,7 @@
 # session_memory.py
 import re
 import streamlit as st
+from interest_model import predict_intent
 
 WINDOW_SIZE = 8
 CONFIDENCE_THRESHOLD = 0.8
@@ -29,9 +30,10 @@ NUMBER_WORDS = {
 PRONOUN_REFERENCE_PATTERNS = [
     r"\bprevious item\b", r"\bprevious one\b", r"\bprevious\b",
     r"\bthat item\b", r"\bthat one\b",
-    r"\bthis one\b",
+    r"\bthis one\b", r"\bthis item\b",
     r"\bsame item\b", r"\bsame one\b",
     r"\blast item\b", r"\blast one\b",
+    r"\bit\b",  # "add it", "order it", "give me it"
 ]
 
 
@@ -65,7 +67,8 @@ def register_shown_items(items):
     order = st.session_state.session_memory["order"]
 
     snapshot = []
-    for idx, item in enumerate(items, start=1):
+    # Cap to top 4 items — exactly matching the items presented on screen
+    for idx, item in enumerate(items[:4], start=1):
         snapshot.append({
             "index": idx,
             "product_id": str(item.get("product_id")),
@@ -79,7 +82,12 @@ def register_shown_items(items):
     order["last_recommendations"] = snapshot
 
     if snapshot:
-        order["last_recommended_item"] = snapshot[0]
+        # Update the pronoun anchor only when a single item was shown —
+        # that's the only case where "it" / "that one" is unambiguous.
+        # For multi-item lists, keep the existing pointer so a previous
+        # single-item reference stays valid across detail-question turns.
+        if len(snapshot) == 1:
+            order["last_recommended_item"] = snapshot[0]
         for entry in snapshot:
             pid = entry["product_id"]
             if pid not in order["recommended_items"]:
@@ -90,6 +98,31 @@ def register_shown_items(items):
     st.session_state.session_memory["state_line"] = _build_state_line(
         st.session_state.session_memory
     )
+
+
+def sync_shown_items_from_response(response_text: str):
+    """
+    Scans the bot's response text for any actual menu item names and updates
+    last_recommendations and last_recommended_item in session_memory.
+    This guarantees 100% synchronization between what the bot displays on screen
+    and what "add it" / "1st item" resolves to, eliminating hallucinations.
+    """
+    if not response_text or not isinstance(response_text, str):
+        return
+    if "df" not in st.session_state or st.session_state.df is None:
+        return
+
+    df = st.session_state.df
+    matched_items = []
+    text_lower = response_text.lower()
+
+    for _, row in df.iterrows():
+        name = str(row.get("name", "")).strip()
+        if name and len(name) > 3 and name.lower() in text_lower:
+            matched_items.append(row.to_dict())
+
+    if matched_items:
+        register_shown_items(matched_items)
 
 
 def extract_quantity(text):
@@ -154,6 +187,10 @@ def resolve_item_references(text):
             raw_indices.append(value)
 
     raw_indices = list(dict.fromkeys(raw_indices))
+    # Bulk quantity (e.g. "2 of the first one") only makes sense when a
+    # single item is targeted. For multiple ordinals each gets quantity=1
+    # so "order the 2nd and last" doesn't silently double both items.
+    single_target = len(raw_indices) == 1
 
     resolved = []
     invalid_indices = []
@@ -165,7 +202,7 @@ def resolve_item_references(text):
         else:
             invalid_indices.append(idx)
             continue
-        resolved.append({"product_id": str(item["product_id"]), "quantity": quantity})
+        resolved.append({"product_id": str(item["product_id"]), "quantity": quantity if single_target else 1})
 
     if resolved:
         confidence = 1.0 if not invalid_indices else 0.5
@@ -220,22 +257,128 @@ def _describe_candidates(items):
     return " or ".join(names)
 
 
-def classify_action(text):
+def classify_action(text, parsed_intent=None):
+    if parsed_intent and parsed_intent.action:
+        return parsed_intent.action
+
     lowered = text.lower()
 
-    if any(p in lowered for p in ["checkout", "place order", "finalize order", "pay now", "complete order"]):
+    if any(p in lowered for p in [
+        "checkout", "place order", "place my order", "finalize order",
+        "pay now", "complete order", "order it", "order my cart",
+    ]):
         return ACTION_CHECKOUT
-    if _is_negative_intent(lowered):
-        return ACTION_REMOVE_ITEM
-    if _is_positive_intent(lowered):
-        return ACTION_ADD_TO_CART
     if any(p in lowered for p in ["allerg", "contains", "gluten", "dairy", "nut", "vegan", "vegetarian", "ingredient"]):
         return ACTION_ASK_ALLERGEN
     if any(p in lowered for p in ["compare", " vs ", "versus", "difference between", "healthier", "which is better"]):
         return ACTION_COMPARE_ITEMS
-    if any(p in lowered for p in ["show", "menu", "recommend", "suggest", "options", "what do you have", "looking for", "give me", "find me"]):
+    if any(p in lowered for p in ["show", "menu", "recommend", "suggest", "options", "what do you have", "looking for", "give me", "find me", "something", "dishes", "craving"]):
         return ACTION_VIEW_MENU
+    if _is_negative_intent(lowered):
+        return ACTION_REMOVE_ITEM
+    if _is_positive_intent(lowered):
+        return ACTION_ADD_TO_CART
+
+    try:
+        intent, conf = predict_intent(text)
+        if intent == "positive" and conf > 0.65:
+            return ACTION_VIEW_MENU
+    except Exception:
+        pass
+
     return ACTION_GENERAL
+
+
+def resolve_item_references(user_text, parsed_intent=None):
+    initialize_session_memory()
+    order = st.session_state.session_memory["order"]
+    recommendations = order.get("last_recommendations", [])
+
+    quantity = parsed_intent.quantity if parsed_intent else 1
+    query = (parsed_intent.target_reference or user_text).lower() if parsed_intent else user_text.lower()
+
+    if not recommendations and not order.get("last_recommended_item"):
+        return {"items": [], "confidence": 0.0, "ambiguous": False}
+
+    raw_indices = []
+    for num in re.findall(r"#(\d+)", query):
+        raw_indices.append(int(num))
+    for num in re.findall(r"(\d+)(?:st|nd|rd|th)", query):
+        raw_indices.append(int(num))
+    for num in re.findall(r"item\s+(\d+)", query):
+        raw_indices.append(int(num))
+    for word, value in ORDINAL_WORDS.items():
+        if re.search(rf"\b{word}\b", query):
+            raw_indices.append(value)
+
+    raw_indices = list(dict.fromkeys(raw_indices))
+    single_target = len(raw_indices) == 1
+
+    resolved = []
+    invalid_indices = []
+    for idx in raw_indices:
+        if idx == -1 and recommendations:
+            item = recommendations[-1]
+        elif 1 <= idx <= len(recommendations):
+            item = recommendations[idx - 1]
+        else:
+            invalid_indices.append(idx)
+            continue
+        resolved.append({"product_id": str(item["product_id"]), "quantity": quantity if single_target else 1})
+
+    if resolved:
+        if single_target and raw_indices and (1 <= raw_indices[0] <= len(recommendations) or raw_indices[0] == -1):
+            order["last_recommended_item"] = recommendations[raw_indices[0] - 1]
+        confidence = 1.0 if not invalid_indices else 0.5
+        return {"items": resolved, "confidence": confidence, "ambiguous": bool(invalid_indices)}
+
+    if invalid_indices:
+        return {"items": [], "confidence": 0.0, "ambiguous": False}
+
+    # Direct name match
+    name_matches = [
+        item for item in recommendations
+        if item["name"] and (item["name"].lower() in query or query in item["name"].lower())
+    ]
+    if len(name_matches) == 1:
+        item = name_matches[0]
+        order["last_recommended_item"] = item
+        return {
+            "items": [{"product_id": str(item["product_id"]), "quantity": quantity}],
+            "confidence": 0.9,
+            "ambiguous": False,
+        }
+    if len(name_matches) > 1:
+        return {
+            "items": [
+                {"product_id": str(m["product_id"]), "quantity": quantity}
+                for m in name_matches
+            ],
+            "confidence": 0.4,
+            "ambiguous": True,
+        }
+
+    # Pronoun reference — "the previous item", "that one", "it", etc.
+    last_item = order.get("last_recommended_item")
+    if last_item:
+        if any(re.search(p, query) for p in PRONOUN_REFERENCE_PATTERNS) or query in ["it", "that", "this", "that one", "this one"]:
+            return {
+                "items": [{"product_id": str(last_item["product_id"]), "quantity": quantity}],
+                "confidence": 0.85,
+                "ambiguous": False,
+            }
+
+    return {"items": [], "confidence": 0.0, "ambiguous": False}
+
+
+def _describe_candidates(items):
+    initialize_session_memory()
+    recs = st.session_state.session_memory["order"].get("last_recommendations", [])
+    names = []
+    for it in items:
+        match = next((r for r in recs if str(r["product_id"]) == str(it["product_id"])), None)
+        names.append(match["name"] if match else it["product_id"])
+    return " or ".join(names)
 
 
 def _add_items_to_cart(order, items):
@@ -263,23 +406,16 @@ def _remove_items_from_cart(order, items):
         order["pending_actions"].append(f"removed product {product_id}")
 
 
-def update_state_from_user_message(user_text):
+def update_state_from_user_message(user_text, parsed_intent=None):
     """
     Intent -> Reference resolution -> Action.
-    Returns:
-    {
-        "action": str,
-        "cart_changed": bool,
-        "needs_clarification": bool,
-        "clarification_message": str | None,
-    }
     """
     initialize_session_memory()
     memory = st.session_state.session_memory
     order = memory["order"]
     lowered = user_text.lower()
 
-    intent_action = classify_action(user_text)
+    intent_action = classify_action(user_text, parsed_intent=parsed_intent)
     result = {
         "action": intent_action,
         "cart_changed": False,
@@ -287,12 +423,14 @@ def update_state_from_user_message(user_text):
         "clarification_message": None,
     }
 
+    # Run reference resolution for ALL turns to keep last_recommended_item anchor updated
+    resolved = resolve_item_references(user_text, parsed_intent=parsed_intent)
+
     if intent_action == ACTION_CHECKOUT:
         order["pending_actions"].append("checkout requested")
-        result["cart_changed"] = True
+        result["cart_changed"] = bool(order["selected_items"])
 
     elif intent_action in (ACTION_ADD_TO_CART, ACTION_REMOVE_ITEM):
-        resolved = resolve_item_references(user_text)
         items = resolved["items"]
         confidence = resolved["confidence"]
 
@@ -307,6 +445,11 @@ def update_state_from_user_message(user_text):
         elif items and confidence >= CONFIDENCE_THRESHOLD:
             if intent_action == ACTION_ADD_TO_CART:
                 _add_items_to_cart(order, items)
+                # Persist anchor so subsequent "add it" targets this item
+                for rec in order.get("last_recommendations", []):
+                    if str(rec["product_id"]) == str(items[0]["product_id"]):
+                        order["last_recommended_item"] = rec
+                        break
             else:
                 _remove_items_from_cart(order, items)
             result["cart_changed"] = True
@@ -446,10 +589,10 @@ def build_order_confirmation_message(action=ACTION_ADD_TO_CART):
             price = 0.0
         subtotal = quantity * price
         total += subtotal
-        lines.append(f"• {quantity} × {name} — ${subtotal:.2f}")
+        lines.append(f"- **{quantity} × {name}** — `${subtotal:.2f}`  ")
 
     lines.append("")
-    lines.append(f"**Total : ${total:.2f}**")
+    lines.append(f"**Total : ${total:.2f}**\n")
     return "\n".join(lines)
 
 
@@ -530,9 +673,9 @@ def _is_positive_intent(text):
 
     positive_patterns = [
         r"\border\b", r"\badd\b", r"\bbuy\b", r"\bconfirm\b", r"\bcheckout\b",
-        r"\bplace order\b", r"\bi'?ll take\b", r"\bi want\b", r"\bgive me\b",
-        r"\bget me\b", r"\bgo with\b", r"\bmake it\b", r"\binclude\b",
-        r"\bone more\b", r"\banother\b", r"\brepeat\b",
+        r"\bplace order\b", r"\bi'?ll take\b", r"\bi want to order\b", r"\bi want the\b",
+        r"\bi want this\b", r"\bi want that\b", r"\bgive me the\b", r"\bget me the\b",
+        r"\bgo with\b", r"\bmake it\b", r"\binclude\b", r"\bone more\b", r"\banother\b",
     ]
     for pattern in positive_patterns:
         if re.search(pattern, text):

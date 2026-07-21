@@ -7,46 +7,69 @@ from session_memory import initialize_session_memory
 from ui_components import render_chat_interface, render_analytics_sidebar, render_admin_panel
 
 st.set_page_config(
-    page_title="FoodieBot Live Demo",
+    page_title="Foodie Assistant Bot",
     page_icon="🤖",
     layout="wide",
 )
 st.markdown(
     """
     <style>
+        /* ── Layout & Container ── */
         .main .block-container {
-            padding-top: 1rem;
-            padding-left: 1.5rem;
-            padding-right: 1.5rem;
-            max-width: 92rem;
+            padding-top: 1.5rem;
+            padding-bottom: 0;
+            padding-left: 1rem;
+            padding-right: 1rem;
+            max-width: 48rem;
+            margin: 0 auto;
         }
 
+        /* Hide Streamlit chrome */
+        #MainMenu, header[data-testid="stHeader"],
+        footer, .stDeployButton {
+            display: none !important;
+        }
+
+        /* ── Chat messages ── */
         div[data-testid="stChatMessage"] {
-            padding: 0.35rem 0;
+            padding: 0.6rem 0;
+            border-bottom: 1px solid rgba(255, 255, 255, 0.06);
         }
 
         div[data-testid="stChatMessage"] > div {
-            border-radius: 18px;
-            padding: 0.95rem 1rem;
-            box-shadow: 0 8px 24px rgba(0, 0, 0, 0.12);
-            border: 1px solid rgba(255, 255, 255, 0.08);
+            border-radius: 0;
+            padding: 0.5rem 0;
+            box-shadow: none;
+            border: none;
+            background: transparent !important;
         }
 
         div[data-testid="stChatMessage"] [data-testid="stMarkdownContainer"] p {
-            line-height: 1.55;
-            margin-bottom: 0.25rem;
+            line-height: 1.6;
+            font-size: 0.95rem;
+            margin-bottom: 0.3rem;
         }
 
-        div[data-testid="stChatMessage"] [data-testid="stAvatarIcon"] {
-            margin-top: 0.15rem;
+        /* Prevent cart-confirmation text from collapsing into
+           single-character-per-line vertical text */
+        div[data-testid="stChatMessage"] [data-testid="stMarkdownContainer"] {
+            min-width: 0;
+            overflow-wrap: anywhere;
+            word-break: normal;
+            white-space: normal;
         }
 
-        div[data-testid="stChatMessage"]:has([data-testid="stAvatarIcon"] svg) > div {
-            background: rgba(255, 255, 255, 0.04);
+        /* ── Chat input ── */
+        div[data-testid="stChatInput"] {
+            max-width: 48rem;
+            margin: 0 auto;
         }
 
-        div[data-testid="stChatMessage"]:has(button[aria-label="user"]) > div {
-            background: rgba(92, 111, 255, 0.12);
+        /* ── Scrollable chat area ── */
+        div[data-testid="stVerticalBlock"] > div[data-testid="stVerticalBlockBorderWrapper"] {
+            border: none !important;
+            border-radius: 0 !important;
+            box-shadow: none !important;
         }
     </style>
     """,
@@ -84,11 +107,11 @@ if "app_ready" not in st.session_state:
     initialize_session_memory()
     st.session_state.app_ready = True
 
-    st.toast("✅ All services initialized!", icon="✅")
+    st.toast("All services initialized!")
     st.rerun()
 
 # Main UI
-st.title("🤖 FoodieBot Live Dashboard")
+st.title("🤖 Foodie Assistant Bot")
 render_chat_interface(st.container())
 
 with st.sidebar:
