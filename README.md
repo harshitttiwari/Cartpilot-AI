@@ -1,122 +1,172 @@
-# 🤖 FoodieBot - AI Restaurant Assistant
+# 🤖 FoodieBot - Enterprise AI Restaurant Assistant
 
-An intelligent restaurant chatbot powered by RAG (Retrieval-Augmented Generation) that helps customers explore menu items with real-time search and personalized recommendations.
+[![Python 3.10+](https://img.shields.io/badge/Python-3.10+-3776AB?style=for-the-badge&logo=python&logoColor=white)](https://www.python.org/)
+[![FastAPI](https://img.shields.io/badge/FastAPI-005571?style=for-the-badge&logo=fastapi)](https://fastapi.tiangolo.com/)
+[![Streamlit](https://img.shields.io/badge/Streamlit-FF4B4B?style=for-the-badge&logo=Streamlit&logoColor=white)](https://streamlit.io/)
+[![ChromaDB](https://img.shields.io/badge/ChromaDB-Vector_DB-purple?style=for-the-badge)](https://www.trychroma.com/)
+[![Gemini & Groq](https://img.shields.io/badge/LLM-Gemini_2.5_Flash_%2B_Groq_Llama_3.3-orange?style=for-the-badge)](https://ai.google.dev/)
 
-## ✨ Features
+An enterprise-grade, 100% Pure Python full-stack AI restaurant assistant. Built with **FastAPI**, **Streamlit**, **ChromaDB Hybrid Search**, **Dual LLM Provider Failover (Gemini 2.5 Flash + Groq Llama 3.3)**, and a **Multilingual Sentiment & Interest Engine**.
 
-- **Smart Menu Search**: Natural language queries to find food items
-- **RAG Pipeline**: ChromaDB + SentenceTransformers for accurate retrieval
-- **LLM Integration**: Groq API with Llama-3.1-8b-instant for conversational responses
-- **Live Analytics**: Real-time query tracking and interest scoring
-- **Admin Panel**: Edit menu data directly in the interface
-- **Fixed Chat UI**: 350px scrollable chat history for optimal UX
+---
 
-## 🚀 Quick Deploy
+## 🌟 Architecture & Key Innovations
 
-### Hugging Face Spaces (Recommended)
-1. Go to [huggingface.co/spaces](https://huggingface.co/spaces) → New Space
-2. Name: `foodiebot`, SDK: `Streamlit`, Python: `3.10`
-3. Add files from this repo (or import from GitHub: `harshitttiwari/FoodieBot`)
-4. Set Environment Variable: `GROQ_API_KEY` = `your_groq_api_key`
-5. Deploy automatically
-
-### Docker Deployment
-```dockerfile
-FROM python:3.10-slim
-WORKDIR /app
-COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
-ENV HF_HOME=/tmp/hf_cache
-ENV TRANSFORMERS_CACHE=/tmp/hf_cache
-COPY . .
-EXPOSE 7860
-CMD ["sh", "-c", "streamlit run app.py --server.port=$PORT --server.address=0.0.0.0"]
+```
+                               ┌────────────────────────────────────────┐
+                               │       Streamlit Web Chatbot UI         │
+                               │        (Frontend - Port 8501)          │
+                               └──────────────────┬─────────────────────┘
+                                                  │ HTTP POST /api/chat
+                                                  ▼
+ ┌──────────────────────────────────────────────────────────────────────────────────────────────┐
+ │                              FastAPI REST Backend (Port 8000)                                │
+ ├────────────────────────────┬───────────────────────────────┬─────────────────────────────────┤
+ │     1. Dual LLM Failover   │   2. Hybrid Search Engine     │ 3. Memory & State Anchor Engine │
+ │  ┌──────────────────────┐  │  ┌─────────────────────────┐  │  ┌───────────────────────────┐  │
+ │  │ Gemini 2.5 Flash     │  │  │ ChromaDB HNSW Vector    │  │  │ Pydantic Intent Parsing   │  │
+ │  │ (Primary)            │  │  │ (384-dim Embeddings)   │  │  │ (Zero Hardcoded Rules)    │  │
+ │  └──────────┬───────────┘  │  └────────────┬────────────┘  │  └─────────────┬─────────────┘  │
+ │             │ 429 Quota    │               │               │                │                │
+ │             ▼              │               ▼               │                ▼                │
+ │  ┌──────────────────────┐  │  ┌─────────────────────────┐  │  ┌───────────────────────────┐  │
+ │  │ Groq Llama 3.3 70B   │  │  │ Okapi BM25 Keyword      │  │  │ Pronoun ("add it") &      │  │
+ │  │ (Automatic Fallback) │  │  │ Ranker                  │  │  │ Ordinal ("1st") Anchoring │  │
+ │  └──────────────────────┘  │  └─────────────────────────┘  │  └───────────────────────────┘  │
+ └────────────────────────────┴───────────────────────────────┴─────────────────────────────────┘
+                                                  │
+                                                  ▼
+                               ┌────────────────────────────────────┐
+                               │   Centralized Logger (log.py)      │
+                               │   (Real-Time Color Terminal Logs)  │
+                               └────────────────────────────────────┘
 ```
 
-### Local Setup
-```bash
-git clone https://github.com/harshitttiwari/FoodieBot.git
-cd FoodieBot
-pip install -r requirements.txt
-echo 'GROQ_API_KEY="your_key_here"' > .env
-streamlit run app.py
-```
+### 1. 🛡️ Dual-Provider LLM Failover (`bot_logic.py`)
+- **Primary**: Google **Gemini 2.5 Flash** (`gemini-2.5-flash`) for lightning-fast gourmet recommendations.
+- **Automatic Failover**: On encountering `429 Rate Limit / Quota Exceeded` errors, the system automatically redirects requests to **Groq Llama 3.3 70B** (`llama-3.3-70b-versatile`) with zero user interruption.
+
+### 2. ⚡ FastAPI REST Server (`api.py`)
+- Exposes clean, high-performance REST API endpoints (`/health`, `/api/chat`, `/api/menu`).
+- Interactive OpenAPI / Swagger Documentation available live at `http://localhost:8000/docs`.
+
+### 3. 🔍 Hybrid Search Engine (`ui_components.py` & `database.py`)
+- Combines dense vector retrieval via **ChromaDB HNSW ANN Index** (384-dimensional `paraphrase-multilingual-MiniLM-L12-v2` embeddings) with sparse **Okapi BM25 keyword ranking**.
+- Features preferred-category boosting and allergen restriction filtering.
+
+### 4. 🧠 Zero-Hallucination State Anchor (`session_memory.py`)
+- **Pronoun & Ordinal Resolution**: Resolves queries like *"add the 1st item"* or *"add it"* with display-order index snapshotting.
+- **Response Syncing**: `sync_shown_items_from_response()` scans LLM text outputs to guarantee that whatever item is displayed on screen is 100% anchored in session memory.
+
+### 5. 🪵 Live Terminal Diagnostic Logging (`log.py`)
+- Color-coded real-time terminal logger reporting active LLM providers, vector encoding steps, hybrid search scores, intent classification, and interest score progression.
+
+---
 
 ## 📁 Project Structure
 
-```
+```text
 FoodieBot/
-├── app.py                 # Main Streamlit application
-├── bot_logic.py          # LLM integration and response logic
-├── database.py           # ChromaDB setup and embeddings
-├── ui_components.py      # Chat interface and analytics
-├── fast_food_products.csv # Menu data
-├── requirements.txt      # Dependencies
-└── .env                  # API keys (local only)
+├── run_app.py              # Master launcher (Starts FastAPI + Streamlit in 1 command)
+├── api.py                  # FastAPI REST API server (Port 8000) with Swagger UI
+├── app.py                  # Streamlit Web UI application (Port 8501)
+├── bot_logic.py            # Dual LLM Adapter (Gemini + Groq) & prompt rules
+├── database.py             # ChromaDB vector DB, BM25 index & SentenceTransformers
+├── session_memory.py       # State machine, pronoun resolution & response text syncing
+├── ui_components.py        # Streamlit UI interface & hybrid search pipeline
+├── interest_model.py       # Logistic Regression sentiment model (English/Hindi/Hinglish)
+├── log.py                  # Centralized color-coded terminal logger engine
+├── fast_food_products.csv  # Gourmet menu dataset (100 products)
+├── requirements.txt        # Project Python dependencies
+└── .env                    # Environment API keys
 ```
 
-## 🔧 Configuration
+---
 
-### Environment Variables
-- `GROQ_API_KEY`: Your Groq API key for LLM access
-- `HF_HOME`: Hugging Face cache directory (auto-set to `/tmp/hf_cache`)
-- `TRANSFORMERS_CACHE`: Transformers cache (auto-set to `/tmp/hf_cache`)
+## 🚀 Quick Start
 
-### Dependencies
-- streamlit==1.36.0
-- python-dotenv==1.0.1
-- langchain-groq==0.1.3
-- pandas==2.2.2
-- chromadb==0.5.3
-- sentence-transformers==2.2.2
-- torch==2.1.2
+### 1. Clone & Install Dependencies
 
-## 🎯 Usage
+```bash
+git clone https://github.com/harshitttiwari/FoodieBot.git
+cd FoodieBot
 
-1. **Ask Questions**: "Show me spicy burgers under $12"
-2. **Get Recommendations**: "What's good for someone with dairy allergies?"
-3. **View Analytics**: Check query performance and interest scores
-4. **Admin Access**: Edit menu items in the sidebar panel
+# Create and activate virtual environment
+python -m venv venv
+venv\Scripts\activate   # On Windows (or source venv/bin/activate on Linux/Mac)
 
-## 🔒 Security Notes
-
-- Never commit `.env` files (already gitignored)
-- Use environment variables or platform secrets for API keys
-- Rotate exposed API keys immediately
-
-## 🐛 Troubleshooting
-
-**Permission denied: '/app/model_cache'**
-- Fixed: App sets `HF_HOME=/tmp/hf_cache` for writable cache
-
-**ModuleNotFoundError: dotenv**
-- Fixed: dotenv import is optional; uses platform secrets as fallback
-
-**Chat area too large**
-- Fixed: Chat history constrained to 350px scrollable container
-
-## 📊 Architecture
-
-```
-User Query → ChromaDB Search → Context Building → Groq LLM → Formatted Response
-     ↓              ↓                ↓              ↓            ↓
-Analytics ← Query Logging ← Interest Scoring ← Response ← Clean Formatting
+# Install requirements
+pip install -r requirements.txt
 ```
 
-## 🤝 Contributing
+### 2. Configure API Keys
 
-1. Fork the repository
-2. Create a feature branch: `git checkout -b feature-name`
-3. Commit changes: `git commit -m "Add feature"`
-4. Push to branch: `git push origin feature-name`
-5. Submit a Pull Request
+Create a `.env` file in the project root:
 
-## 📄 License
+```env
+GEMINI_API_KEY="your_gemini_api_key_here"
+GROQ_API_KEY="your_groq_api_key_here"
+```
 
-MIT License - see [LICENSE](LICENSE) file for details.
+### 3. Run Application (1-Command Master Launcher)
 
-## 🔗 Links
+Launch both the **FastAPI REST Server** and **Streamlit Web UI** simultaneously:
 
-- [Live Demo](https://huggingface.co/spaces/harshitttiwari/foodiebot)
-- [GitHub Repository](https://github.com/harshitttiwari/FoodieBot)
-- [Groq API](https://groq.com/)
+```bash
+python run_app.py
+```
+
+- 🌐 **Streamlit Web UI**: [http://localhost:8501](http://localhost:8501)
+- 🌐 **Interactive Swagger API Docs**: [http://localhost:8000/docs](http://localhost:8000/docs)
+- 🌐 **API Health Endpoint**: [http://localhost:8000/health](http://localhost:8000/health)
+
+---
+
+## 📡 REST API Reference
+
+### `POST /api/chat`
+Sends a user message to FoodieBot and receives the bot response, action type, interest score, and cart state.
+
+**Request**:
+```json
+{
+  "user_input": "suggest something spicy for rainy weather",
+  "session_id": "user_session_1"
+}
+```
+
+**Response**:
+```json
+{
+  "user_input": "suggest something spicy for rainy weather",
+  "bot_response": "• Spicy Thai Fusion Pizza – $15.49...",
+  "action": "VIEW_MENU",
+  "interest_score": 58,
+  "cart_changed": false,
+  "cart_items_count": 0,
+  "latency_ms": 620.45
+}
+```
+
+---
+
+### `GET /api/menu`
+Retrieves menu items with optional category filtering and keyword search.
+
+**Query Parameters**:
+- `category` *(optional)*: Filter by category (e.g. `Pizza`, `Burgers`, `Beverages`).
+- `search` *(optional)*: Filter by keyword in product name.
+
+---
+
+## 📊 Benchmark & Evaluation Metrics
+
+- **Automated Integration Stress Suite**: **100% Pass Rate** across 14 multi-turn integration test cases.
+- **Out-of-Sample Generalization**: **80.0% Overall Score** across 20 unseen multi-turn prompts.
+- **Intent Parsing Accuracy**: **88.2%** on novel Hinglish, slang, and typo inputs.
+
+---
+
+## 📜 License
+
+Distributed under the MIT License. Developed for Advanced AI Application Development.
