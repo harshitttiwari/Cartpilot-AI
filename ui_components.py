@@ -399,7 +399,7 @@ def _suggest_pairing(resolved_action):
 def _hybrid_search(prompt, top_k=10, parsed_intent=None):
     preferred_categories = _preferred_categories_for_query(prompt, parsed_intent=parsed_intent)
 
-    avoid_items = _items_to_avoid_for_query(prompt)
+    avoid_items = _items_to_avoid_for_query(prompt, parsed_intent=parsed_intent)
     log_embedding_generated(prompt, dim=384)
     query_embedding = st.session_state.embedder.encode(
         [prompt], show_progress_bar=False
@@ -440,23 +440,9 @@ def _hybrid_search(prompt, top_k=10, parsed_intent=None):
         else:
             combined[product_id] = {"metadata": metadata, "score": bm25_score * 0.25}
 
-    ranked_items = sorted(
-        combined.values(),
-        key=lambda item: (
-            not _matches_preferred_category(item["metadata"], preferred_categories),
-            _should_avoid_item(item["metadata"], avoid_items),
-            -item["score"],
-        ),
-    )[:top_k]
-
-    top_relevance = ranked_items[0]["score"] if ranked_items else 0.0
-    log_vector_search(prompt, len(ranked_items), top_relevance)
-
+    ranked_items = sorted(combined.values(), key=lambda item: item["score"], reverse=True)
     return {
         "metadatas": [[item["metadata"] for item in ranked_items]],
-        # Category and BM25 bonuses can push combined scores above 1.0,
-        # which makes distances negative and match_score display > 100%.
-        # Clamp here so downstream threshold checks stay in [0, 1].
         "distances": [[max(0.0, min(1.0, 1 - item["score"])) for item in ranked_items]],
     }
 
@@ -473,16 +459,12 @@ def _matches_preferred_category(metadata, preferred_categories):
     return (metadata.get("category") or "").lower() in preferred_categories
 
 
-def _items_to_avoid_for_query(prompt):
-    query = prompt.lower()
+def _items_to_avoid_for_query(prompt, parsed_intent=None):
+    is_new = False
+    if parsed_intent and getattr(parsed_intent, "is_request_for_new_options", False):
+        is_new = True
 
-    new_option_words = [
-        "another", "different", "else", "more options",
-        "other option", "not this", "change it",
-        "show more", "next",
-    ]
-
-    if not any(word in query for word in new_option_words):
+    if not is_new:
         return set()
 
     memory = st.session_state.get("session_memory", {})

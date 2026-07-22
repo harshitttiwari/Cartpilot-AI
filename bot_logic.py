@@ -112,6 +112,7 @@ class ParsedUserIntent(BaseModel):
     target_reference: Optional[str] = None
     quantity: int = 1
     cleaned_search_query: str = ""
+    is_request_for_new_options: bool = False
 
 
 def parse_intent_with_llm(llm, user_text: str) -> ParsedUserIntent:
@@ -129,24 +130,26 @@ Analyze the user's message and return a JSON object matching this schema:
 
 {{
   "action": "VIEW_MENU" | "ADD_TO_CART" | "REMOVE_ITEM" | "CHECKOUT" | "ASK_ALLERGEN" | "COMPARE_ITEMS" | "GENERAL",
-  "dietary_restrictions": ["soy", "gluten", "dairy", "nuts", "egg", "fish", "sesame", "zero-sugar", "vegan", "vegetarian"],
-  "category_preference": "burgers" | "pizza" | "tacos & wraps" | "salads & healthy options" | "beverages" | "sides & appetizers" | "desserts" | "fried chicken" | null,
-  "target_reference": string or null (e.g. "1st", "2nd", "pizza", "that one", "last item"),
+  "dietary_restrictions": [strings],
+  "category_preference": string or null,
+  "target_reference": string or null,
   "quantity": integer (default 1),
-  "cleaned_search_query": string (corrected search query fixing any typos, e.g. "zero suger" -> "zero sugar healthy options")
+  "cleaned_search_query": string,
+  "is_request_for_new_options": boolean (true if user asks for alternative, different, or more options/suggestions in any phrasing or language)
 }}
 
 Rules:
 1. "action":
-   - "VIEW_MENU": user wants recommendations, browsing, asking what food exists, cravings, or asking for details/description of an item ("tell about this item", "describe the 1st option", "something spicy", "hungry").
-   - "ADD_TO_CART": user explicitly wants to add/order a specific item or position ("add the 2nd", "I'll take the pizza", "order the fish taco").
-   - "REMOVE_ITEM": user wants to remove an item from cart ("remove the 1st", "delete pizza").
-   - "CHECKOUT": user wants to finalize, pay, or complete order ("checkout", "pay now", "order it", "place order").
-   - "ASK_ALLERGEN": user asks about allergens, ingredients, or safety ("does it have nuts", "gluten free").
+   - "VIEW_MENU": user wants recommendations, browsing, asking what food exists, cravings, or asking for details/more options.
+   - "ADD_TO_CART": user explicitly wants to add/order a specific item or position.
+   - "REMOVE_ITEM": user wants to remove an item from cart.
+   - "CHECKOUT": user wants to finalize, pay, or complete order.
+   - "ASK_ALLERGEN": user asks about allergens, ingredients, or safety.
    - "COMPARE_ITEMS": user asks to compare two items.
-   - "GENERAL": greetings, small talk, vague questions ("hello", "how are you").
+   - "GENERAL": greetings, small talk, vague questions.
 
-2. Fix any typos in "cleaned_search_query" (e.g. "suger" -> "sugar", "ingidwnints" -> "ingredients").
+2. Fix any typos in "cleaned_search_query".
+3. Set "is_request_for_new_options" to true whenever the user asks for alternative, different, or more options/suggestions ("any more", "other options", "what else", "change it").
 
 User Message: "{user_text}"
 
@@ -217,6 +220,7 @@ You are FoodieBot, a warm, polite, and knowledgeable gourmet restaurant concierg
 - Use the CONTEXT to answer questions. If the user asks if an item is healthy, light, or heavy, use its calorie count and ingredients to respond (e.g., "It has 610 calories and is fried, so it's an indulgent option"). If the user compares items, you may do so.
 - If the user's request is contradictory, missing critical information, or unclear, politely ask ONE clarifying question before attempting to answer.
 - When the user asks for a holistic recommendation based on their preferences, carefully review the SESSION MEMORY and the conversation to identify their stated dietary restrictions, likes, and dislikes, and suggest the single best matching item from the menu.
+- If the user mentions non-food, chemical, or hazardous household substances (e.g., detergent, Harpic, bleach, soap, phenyl, washing powder), politely and firmly explain that chemical cleaning products are toxic and strictly unsafe for consumption, and offer to help them find a safe, delicious menu item instead.
 - If exact parameters (like sugar grams or specific recipe steps) are not in the CONTEXT, answer conversationally using available menu items and categories (e.g., recommend Salads, Unsweetened Beverages, or light options) instead of giving abrupt non-answers.
 
 {memory_context}
@@ -236,7 +240,9 @@ Respond as FoodieBot.
         response = llm.invoke(prompt)
         content = getattr(response, "content", "")
         if not content or not content.strip():
-            return "I'm sorry, I didn't quite catch that. Could you please rephrase your request?"
+            if context and "No relevant items" not in context:
+                return f"Here are a few more delicious options from our menu:\n\n{context}"
+            return "Here are a few more popular options! Let me know if any of these sound good to you."
         return _clean_response(content)
     except Exception as e:
         return f"Sorry, I'm having a technical issue right now: {e}"
@@ -247,20 +253,13 @@ Respond as FoodieBot.
 # ---------------------------------------------------------------------------
 
 def _is_inappropriate_or_irrelevant(user_input):
-    """Checks for inappropriate content or off-topic messages."""
-    bad_words = ['sex', 'porn', 'fuck', 'shit']
-    if any(word in user_input.lower() for word in bad_words):
-        return True
-
+    """
+    Delegates moderation and off-topic handling to the LLM system prompt rules.
+    Only flags non-text/corrupted data inputs.
+    """
     if len(user_input) > 10:
         non_ascii_count = sum(1 for c in user_input if ord(c) > 127)
         if non_ascii_count > len(user_input) * 0.7:
-            return True
-
-    off_topic = ['weather', 'politics']
-    if any(word in user_input.lower() for word in off_topic):
-        food_words = ['food', 'eat', 'menu', 'hungry', 'burger', 'pizza', 'order']
-        if not any(word in user_input.lower() for word in food_words):
             return True
 
     return False
