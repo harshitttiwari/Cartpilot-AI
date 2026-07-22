@@ -143,7 +143,7 @@ Rules:
    - "VIEW_MENU": user wants recommendations, browsing, asking what food exists, cravings, or asking for details/more options.
    - "ADD_TO_CART": user explicitly wants to add/order a specific item or position.
    - "REMOVE_ITEM": user wants to remove an item from cart.
-   - "CHECKOUT": user wants to finalize, pay, or complete order.
+   - "CHECKOUT": user wants to finalize, pay, checkout, or complete order ("checkout", "pay now", "order it", "place order", "just order my current item", "no just order my item").
    - "ASK_ALLERGEN": user asks about allergens, ingredients, or safety.
    - "COMPARE_ITEMS": user asks to compare two items.
    - "GENERAL": greetings, small talk, vague questions.

@@ -266,6 +266,7 @@ def classify_action(text, parsed_intent=None):
     if any(p in lowered for p in [
         "checkout", "place order", "place my order", "finalize order",
         "pay now", "complete order", "order it", "order my cart",
+        "just order", "order my current", "order current", "order this",
     ]):
         return ACTION_CHECKOUT
     if any(p in lowered for p in ["allerg", "contains", "gluten", "dairy", "nut", "vegan", "vegetarian", "ingredient"]):
@@ -296,6 +297,14 @@ def resolve_item_references(user_text, parsed_intent=None):
 
     quantity = parsed_intent.quantity if parsed_intent else 1
     query = (parsed_intent.target_reference or user_text).lower() if parsed_intent else user_text.lower()
+
+    if any(phrase in query for phrase in ["current item", "my current item", "item in cart", "cart item", "items in cart"]):
+        if order.get("selected_items"):
+            return {
+                "items": order["selected_items"],
+                "confidence": 0.95,
+                "ambiguous": False,
+            }
 
     if not recommendations and not order.get("last_recommended_item"):
         return {"items": [], "confidence": 0.0, "ambiguous": False}
