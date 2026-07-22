@@ -10,6 +10,7 @@ st.set_page_config(
     page_title="Foodie Assistant Bot",
     page_icon="🤖",
     layout="wide",
+    initial_sidebar_state="expanded",
 )
 st.markdown(
     """
@@ -24,10 +25,13 @@ st.markdown(
             margin: 0 auto;
         }
 
-        /* Hide Streamlit chrome */
-        #MainMenu, header[data-testid="stHeader"],
-        footer, .stDeployButton {
+        /* Hide Streamlit toolbar elements while preserving sidebar toggle */
+        #MainMenu, footer, .stDeployButton {
             display: none !important;
+        }
+
+        header[data-testid="stHeader"] {
+            background: transparent !important;
         }
 
         /* ── Chat messages ── */

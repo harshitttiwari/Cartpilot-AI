@@ -516,19 +516,18 @@ def _should_avoid_item(metadata, avoid_items):
 def render_analytics_sidebar(container):
     st.markdown("### 📈 Live Analytics")
     if not st.session_state.query_log:
-        st.info("No queries yet.")
-        return
-    latest = st.session_state.query_log[-1]
-
-    with st.container(border=True):
-        st.markdown("**Latest Query**")
-        st.write(f"**User Query:** {latest['user_query']}")
-        if latest["top_match"] == "No menu match":
-            st.write("**Top Match:** No menu match (conversational turn)")
-        else:
-            st.write(f"**Top Match:** {latest['top_match']} ({latest['match_score']:.2%})")
-        st.write(f"**Action:** {latest.get('action', 'N/A')}")
-        st.write(f"**Time:** {latest['duration_ms']} ms")
+        st.info("💡 Send a message to see real-time search metrics & latency logs.")
+    else:
+        latest = st.session_state.query_log[-1]
+        with st.container(border=True):
+            st.markdown("**Latest Query**")
+            st.write(f"**User Query:** {latest['user_query']}")
+            if latest["top_match"] == "No menu match":
+                st.write("**Top Match:** No menu match (conversational turn)")
+            else:
+                st.write(f"**Top Match:** {latest['top_match']} ({latest['match_score']:.2%})")
+            st.write(f"**Action:** {latest.get('action', 'N/A')}")
+            st.write(f"**Time:** {latest['duration_ms']} ms")
 
     with st.container(border=True):
         st.markdown("**Intent Score**")
