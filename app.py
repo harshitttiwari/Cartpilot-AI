@@ -1,4 +1,19 @@
 # app.py
+import os
+import sys
+import logging
+import warnings
+
+# Suppress HuggingFace Hub, Tokenizers, and PyTorch console warnings & progress bars
+os.environ["HF_HUB_DISABLE_PROGRESS_BARS"] = "1"
+os.environ["HF_HUB_DISABLE_SYMLINKS_WARNING"] = "1"
+os.environ["TOKENIZERS_PARALLELISM"] = "false"
+os.environ["TRANSFORMERS_VERBOSITY"] = "error"
+warnings.filterwarnings("ignore")
+logging.getLogger("huggingface_hub").setLevel(logging.ERROR)
+logging.getLogger("transformers").setLevel(logging.ERROR)
+logging.getLogger("sentence_transformers").setLevel(logging.ERROR)
+
 import streamlit as st
 from dotenv import load_dotenv
 from database import initialize_services
@@ -7,73 +22,126 @@ from session_memory import initialize_session_memory
 from ui_components import render_chat_interface, render_analytics_sidebar, render_admin_panel
 
 st.set_page_config(
-    page_title="Foodie Assistant Bot",
-    page_icon="🤖",
+    page_title="Voice Command Shopping Assistant",
+    page_icon="🛒",
     layout="wide",
     initial_sidebar_state="expanded",
 )
 st.markdown(
     """
     <style>
+        /* ── Lock Page Viewport (Still Page, No Jumping) ── */
+        html, body, [data-testid="stAppViewContainer"], .main {
+            height: 100vh !important;
+            max-height: 100vh !important;
+            overflow: hidden !important;
+        }
+
+        /* Hide Streamlit top header & toolbar completely */
+        #MainMenu, footer, .stDeployButton, header[data-testid="stHeader"] {
+            display: none !important;
+            height: 0 !important;
+            min-height: 0 !important;
+            padding: 0 !important;
+            margin: 0 !important;
+        }
+
         /* ── Layout & Container ── */
         .main .block-container {
-            padding-top: 1.5rem;
-            padding-bottom: 0;
-            padding-left: 1rem;
-            padding-right: 1rem;
-            max-width: 48rem;
-            margin: 0 auto;
+            padding-top: 0.8rem !important;
+            padding-bottom: 0.5rem !important;
+            padding-left: 1rem !important;
+            padding-right: 1rem !important;
+            max-width: 50rem !important;
+            margin: 0 auto !important;
+            height: calc(100vh - 1.2rem) !important;
+            display: flex;
+            flex-direction: column;
         }
 
-        /* Hide Streamlit toolbar elements while preserving sidebar toggle */
-        #MainMenu, footer, .stDeployButton {
-            display: none !important;
+        /* ── Custom Sleek Header ── */
+        .app-header {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            margin-bottom: 0.6rem;
+            padding-bottom: 0.5rem;
+            border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+            flex-shrink: 0;
         }
-
-        header[data-testid="stHeader"] {
-            background: transparent !important;
+        .app-title {
+            font-size: 1.75rem;
+            font-weight: 800;
+            letter-spacing: -0.02em;
+            background: linear-gradient(135deg, #FFFFFF 0%, #E0E0E0 50%, #90CAF9 100%);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+        .app-badge {
+            font-size: 0.80rem;
+            font-weight: 600;
+            padding: 4px 10px;
+            border-radius: 14px;
+            background: rgba(255, 75, 75, 0.15);
+            color: #FF4B4B;
+            border: 1px solid rgba(255, 75, 75, 0.3);
         }
 
         /* ── Chat messages ── */
         div[data-testid="stChatMessage"] {
-            padding: 0.6rem 0;
-            border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+            padding: 0.5rem 0.8rem !important;
+            margin-bottom: 0.35rem !important;
+            border-radius: 10px !important;
+            background: rgba(255, 255, 255, 0.03) !important;
+            border: 1px solid rgba(255, 255, 255, 0.05) !important;
         }
 
-        div[data-testid="stChatMessage"] > div {
-            border-radius: 0;
-            padding: 0.5rem 0;
-            box-shadow: none;
-            border: none;
-            background: transparent !important;
+        div[data-testid="stChatMessage"] [data-testid="stMarkdownContainer"] p,
+        div[data-testid="stChatMessage"] [data-testid="stMarkdownContainer"] li {
+            line-height: 1.55 !important;
+            font-size: 0.98rem !important;
+            margin-bottom: 0.25rem !important;
         }
 
-        div[data-testid="stChatMessage"] [data-testid="stMarkdownContainer"] p {
-            line-height: 1.6;
-            font-size: 0.95rem;
-            margin-bottom: 0.3rem;
-        }
-
-        /* Prevent cart-confirmation text from collapsing into
-           single-character-per-line vertical text */
+        /* Prevent text wrapping issues */
         div[data-testid="stChatMessage"] [data-testid="stMarkdownContainer"] {
             min-width: 0;
-            overflow-wrap: anywhere;
+            overflow-wrap: break-word;
             word-break: normal;
-            white-space: normal;
         }
 
         /* ── Chat input ── */
         div[data-testid="stChatInput"] {
-            max-width: 48rem;
+            max-width: 52rem;
             margin: 0 auto;
+            flex-shrink: 0;
         }
 
-        /* ── Scrollable chat area ── */
-        div[data-testid="stVerticalBlock"] > div[data-testid="stVerticalBlockBorderWrapper"] {
-            border: none !important;
-            border-radius: 0 !important;
-            box-shadow: none !important;
+        div[data-testid="stChatInput"] textarea {
+            font-size: 0.95rem !important;
+        }
+
+        /* ── Perfectly Balanced Sidebar Cards ── */
+        section[data-testid="stSidebar"] {
+            min-width: 17rem !important;
+            max-width: 32rem !important;
+        }
+        section[data-testid="stSidebar"] .block-container {
+            padding-top: 0.8rem !important;
+            padding-left: 0.8rem !important;
+            padding-right: 0.8rem !important;
+            padding-bottom: 0.5rem !important;
+        }
+        section[data-testid="stSidebar"] div[data-testid="stVerticalBlockBorderWrapper"] {
+            padding: 0.4rem 0.6rem !important;
+            margin-bottom: 0.4rem !important;
+            border-radius: 8px !important;
+        }
+        section[data-testid="stSidebar"] hr {
+            margin: 0.4rem 0 !important;
         }
     </style>
     """,
@@ -114,11 +182,19 @@ if "app_ready" not in st.session_state:
     st.toast("All services initialized!")
     st.rerun()
 
-# Main UI
-st.title("🤖 Foodie Assistant Bot")
+# Sleek Compact Header
+st.markdown(
+    """
+    <div class="app-header">
+        <div class="app-title">🛒 Voice Command Shopping Assistant</div>
+        <div class="app-badge">🎙️ Voice + NLP Active</div>
+    </div>
+    """,
+    unsafe_allow_html=True,
+)
+
 render_chat_interface(st.container())
 
 with st.sidebar:
-
     render_analytics_sidebar(None)
     render_admin_panel()

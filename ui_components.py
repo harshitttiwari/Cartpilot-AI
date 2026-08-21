@@ -3,158 +3,73 @@ import streamlit as st
 import time
 from datetime import datetime
 from bot_logic import get_ai_response, calculate_interest_score, parse_intent_with_llm
+from voice_component import render_voice_controller, render_tts_speaker
 from database import DATA_FILE_PATH
-from log import log_embedding_generated, log_vector_search
+from log import log_embedding_generated, log_vector_search, log_voice_command
 from session_memory import (
     build_memory_context,
     build_order_confirmation_message,
+    extract_allergen_restrictions,
     initialize_session_memory,
     record_turn,
     register_shown_items,
     sync_shown_items_from_response,
     update_state_from_user_message,
+    add_item_to_cart,
+    get_cart_by_aisles,
+    get_cart_total,
+    get_cart_items_count,
+    clear_cart,
 )
 
-CART_MUTATING_ACTIONS = {"ADD_TO_CART", "REMOVE_ITEM", "CHECKOUT"}
-MENU_RELEVANT_ACTIONS = {"VIEW_MENU", "ASK_ALLERGEN", "COMPARE_ITEMS"}
-
-# Relevance thresholds. Below these a top match is noise, not a real
-# recommendation. Tune against your own corpus if scores run differently.
-RELEVANCE_THRESHOLD = 0.30
-KEYWORD_OVERLAP_THRESHOLD = 0.34
+CART_MUTATING_ACTIONS = {"ADD_TO_CART", "REMOVE_ITEM", "CLEAR_CART", "VIEW_CART", "CHECKOUT"}
+RELEVANCE_THRESHOLD = 0.28
 
 
 # ----------------- Context Building Helpers -----------------
 
-def _build_enhanced_context(user_query, search_results):
-    """Build readable context for the LLM from database search results."""
+def _build_enhanced_context(user_query, search_results, parsed_intent=None):
+    """Build readable grocery catalog context for the LLM from database search results."""
     if not search_results or not search_results.get("metadatas") or not search_results["metadatas"][0]:
-        return "No relevant items found in the menu."
+        return "No matching products found in the grocery catalog."
 
-    allergen_restrictions = _detect_allergen_restrictions(user_query)
-    request_type = _analyze_request_type(user_query)
-    filtered_items = _filter_items_by_restrictions(search_results["metadatas"][0], allergen_restrictions)
-    categorized_items = _categorize_items(filtered_items, request_type)
+    dietary_restrictions = extract_allergen_restrictions(user_query)
+    category_pref = parsed_intent.category_preference if parsed_intent else None
+    
+    items = search_results["metadatas"][0]
+    if not items:
+        return "No suitable grocery items found."
 
-    if not filtered_items:
-        allergen_msg = f" (avoiding {', '.join(allergen_restrictions)})" if allergen_restrictions else ""
-        return f"No suitable menu items found{allergen_msg}."
-
-    context = "Here are the relevant menu items:\n\n"
-    for category, items in categorized_items.items():
-        if not items:
-            continue
-        context += f"**{category.upper()}:**\n"
-        for item in items:
-            price = _format_price(item.get("price"))
-            allergens = item.get("allergens", "None listed") or "None listed"
-            allergens_display = "No allergens listed" if allergens == "None listed" else f"Contains: {allergens}"
-            calories = item.get("calories", "N/A")
-
-            context += f"• {item.get('name', 'N/A')} – {price}\n"
-            if calories and calories != "N/A":
-                context += f"    Calories: {calories}\n"
-            context += f"    Category: {item.get('category', 'N/A')}\n"
-            context += f"    Allergens: {allergens_display}\n"
-        context += "\n"
-    return context
-
-
-def _format_price(value):
-    try:
-        return f"${float(value):.2f}"
-    except Exception:
-        return "Price N/A"
-
-
-def _detect_allergen_restrictions(user_query):
-    query = user_query.lower()
-    allergen_keywords = {
-        "soy":    ["no soy", "without soy", "avoid soy", "soy free", "soy allergy"],
-        "gluten": ["no gluten", "without gluten", "avoid gluten", "gluten free", "celiac"],
-        "dairy":  ["no dairy", "without dairy", "avoid dairy", "dairy free", "lactose", "milk allergy", "no milk", "without milk"],
-        "nuts":   ["no nuts", "without nuts", "avoid nuts", "nut free", "peanut allergy", "tree nut allergy", "no peanuts"],
-        "egg":    ["no egg", "without egg", "avoid egg", "egg free"],
-        "fish":   ["no fish", "without fish", "avoid fish", "fish free", "seafood allergy"],
-        "sesame": ["no sesame", "without sesame", "avoid sesame", "sesame free"],
-    }
-    return [a for a, kws in allergen_keywords.items() if any(k in query for k in kws)]
-
-
-def _analyze_request_type(user_query):
-    query = user_query.lower()
-    keywords = {
-        "main_dish": ["meal", "dish", "dinner", "lunch"],
-        "snack":     ["snack", "appetizer", "light"],
-        "drink":     ["drink", "beverage", "thirsty", "cooling", "refreshing", "refresher", "lemonade", "shake", "smoothie"],
-        "sweet":     ["sweet", "dessert"],
-    }
-    return [t for t, kws in keywords.items() if any(k in query for k in kws)]
-
-
-def _filter_items_by_restrictions(items, restrictions):
-    if not restrictions:
-        return items
-    return [
-        item for item in items
-        if not any(r in (item.get("allergens", "").lower()) for r in restrictions)
-    ]
-
-
-def _categorize_items(items, request_types):
-    categories = {"main_dishes": [], "appetizers_snacks": [], "beverages": [], "desserts": []}
+    categorized = {}
     for item in items:
-        cat = (item.get("category") or "").lower()
-        name = (item.get("name") or "").lower()
+        cat = item.get("category", "General Grocery")
+        if cat not in categorized:
+            categorized[cat] = []
+        categorized[cat].append(item)
 
-        if cat in ["burgers", "pizza", "tacos & wraps", "salads & healthy options",
-                   "breakfast items", "fried chicken"]:
-            categories["main_dishes"].append(item)
-        elif cat == "sides & appetizers" or any(x in name for x in ["fries", "chips", "bites", "rings", "poppers"]):
-            categories["appetizers_snacks"].append(item)
-        elif cat == "beverages":
-            categories["beverages"].append(item)
-        elif cat == "desserts":
-            categories["desserts"].append(item)
-        else:
-            categories["main_dishes"].append(item)
+    context = "Available Supermarket Items Matching Request:\n\n"
+    for category, item_list in categorized.items():
+        context += f"**{category.upper()}:**\n"
+        for item in item_list:
+            price = f"${float(item.get('price', 0.0)):.2f}"
+            unit = item.get("unit", "")
+            unit_display = f" ({unit})" if unit else ""
+            diet = item.get("dietary_tags", "standard") or "standard"
 
-    if "main_dish" in request_types:
-        return {"main_dishes": categories["main_dishes"]}
-    if "snack" in request_types:
-        return {"appetizers_snacks": categories["appetizers_snacks"]}
-    if "drink" in request_types:
-        return {"beverages": categories["beverages"]}
-    return categories
+            context += f"• **{item.get('name', 'N/A')}**{unit_display} – {price}\n"
+            context += f"  • Category: {item.get('category', 'N/A')}\n"
+            context += f"  • Dietary: [{diet}]\n"
+            if item.get("description"):
+                context += f"  • Info: {item.get('description')}\n"
+            context += "\n"
+
+    return context
 
 
 # ----------------- UI Rendering -----------------
 
-
-def _keyword_overlap_score(prompt, item_metadata):
-    """
-    Deterministic fallback relevance signal — plain token overlap between the
-    query and an item's searchable text. Unlike the ANN vector score (which
-    can vary slightly between identical calls due to HNSW's approximate
-    nature), this is 100% reproducible, so it's combined with the vector
-    score to stop identical queries from flip-flopping between "found" and
-    "not found".
-    """
-    query_tokens = set(prompt.lower().split())
-    text = " ".join(
-        str(item_metadata.get(k, ""))
-        for k in ("name", "category", "description", "ingredients", "dietary_tags")
-    )
-    item_tokens = set(text.lower().split())
-    if not query_tokens or not item_tokens:
-        return 0.0
-    overlap = query_tokens & item_tokens
-    return len(overlap) / max(1, len(query_tokens))
-
-
 def render_chat_interface(container):
     with container:
-
         initialize_session_memory()
 
         if "chat_history" not in st.session_state:
@@ -163,10 +78,8 @@ def render_chat_interface(container):
         if not st.session_state.chat_history:
             st.session_state.chat_history.append({
                 "role": "assistant",
-                "content": "Welcome to Foodie Assistant Bot! Ask me about menu items, recommendations, allergens, or drinks.",
+                "content": "👋 **Hello!** What groceries would you like to add to your list today? *(e.g., \"Add 2 milk and bread\")*",
             })
-        else:
-            st.session_state.chat_history[0]["content"] = "Welcome to Foodie Assistant Bot! Ask me about menu items, recommendations, allergens, or drinks."
 
         if "interest_score" not in st.session_state:
             st.session_state.interest_score = 50
@@ -177,142 +90,133 @@ def render_chat_interface(container):
         if "query_log" not in st.session_state:
             st.session_state.query_log = []
 
-        chat_history_container = st.container(height=520)
+        # 1. Voice Controller Bar (Mic Button + Language Selector + TTS Switch)
+        render_voice_controller()
 
+        # 2. Scrollable Chat History Container (Fills viewport cleanly)
+        chat_history_container = st.container(height=480)
         with chat_history_container:
-            # Render only the last 50 messages to prevent UI slowdown on long
-            # sessions. Full history stays in session_state for LLM context.
             for msg in st.session_state.chat_history[-50:]:
                 avatar_icon = "🤖" if msg["role"] == "assistant" else "👤"
                 with st.chat_message(msg["role"], avatar=avatar_icon):
                     st.markdown(msg["content"])
 
-        if prompt := st.chat_input("Ask me about the menu..."):
-
+        # 3. Chat Input Box (Voice injects directly here)
+        if prompt := st.chat_input("Speak or type grocery commands..."):
+            lang = st.session_state.get("selected_voice_lang", "en-IN")
+            log_voice_command(lang, prompt)
             record_turn("user", prompt)
             st.session_state.chat_history.append({"role": "user", "content": prompt})
 
-            with st.spinner("Thinking..."):
+            with st.spinner("Processing command..."):
                 start = time.time()
-                api_success = False
+                current_cart = st.session_state.session_memory.get("order", {}).get("selected_items", [])
+                parsed_intent = parse_intent_with_llm(st.session_state.llm, prompt, current_cart_items=current_cart)
+                action_type = parsed_intent.action
+                
+                # Check for state mutation (View Cart, Clear Cart, Remove, Ordinal/Pronoun Add)
+                resolved_action = update_state_from_user_message(prompt, parsed_intent=parsed_intent)
+                
+                top_match = "N/A"
+                match_score = 1.0
+                search_results = None
 
-                # STEP 1: Attempt to call FastAPI REST Backend Server first
-                try:
-                    import requests
-                    res = requests.post(
-                        "http://127.0.0.1:8000/api/chat",
-                        json={"user_input": prompt, "session_id": "streamlit_session"},
-                        timeout=5.0
-                    )
-                    if res.status_code == 200:
-                        data = res.json()
-                        response = data["bot_response"]
-                        action_type = data["action"]
-                        st.session_state.interest_score = data["interest_score"]
-                        duration = data["latency_ms"] / 1000.0
-                        top_match = "FastAPI Backend"
-                        match_score = 1.0
-                        api_success = True
-                except Exception:
-                    api_success = False
+                # Handle Multi-Item Voice Addition
+                if action_type == "ADD_TO_CART" and not resolved_action.get("cart_changed"):
+                    items_to_add = parsed_intent.items
+                    if not items_to_add:
+                        # Single query fallback
+                        items_to_add = [{"item_name": parsed_intent.cleaned_search_query or prompt, "quantity": 1}]
 
-                # STEP 2: Fallback to direct Python pipeline if FastAPI server is offline
-                if not api_success:
-                    parsed_intent = parse_intent_with_llm(st.session_state.llm, prompt)
-                    resolved_action = update_state_from_user_message(prompt, parsed_intent=parsed_intent)
-                    action_type = resolved_action["action"]
+                    added_summaries = []
+                    all_suggestions = []
 
-                    should_search = action_type not in CART_MUTATING_ACTIONS
-                    search_results = None
+                    for it in items_to_add:
+                        item_name = it.item_name if hasattr(it, "item_name") else it.get("item_name", "")
+                        qty = it.quantity if hasattr(it, "quantity") else it.get("quantity", 1)
+                        
+                        s_results = _hybrid_search(item_name, top_k=3, parsed_intent=parsed_intent)
+                        if s_results and s_results.get("metadatas") and s_results["metadatas"][0]:
+                            best_match = s_results["metadatas"][0][0]
+                            res = add_item_to_cart(best_match, quantity=qty)
+                            added_summaries.append(f"**{qty}x {best_match['name']}** ({best_match.get('unit', '')})")
+                            all_suggestions.extend(res.get("smart_suggestions", []))
+                            register_shown_items(s_results["metadatas"][0])
+
+                    if added_summaries:
+                        total = get_cart_total()
+                        total_count = get_cart_items_count()
+                        items_str = ", ".join(added_summaries)
+                        response = f"🛒 Added {items_str} to your shopping list! (Subtotal: **\\${total:.2f}**)"
+                        
+                        # If user also said "and checkout" / "place order", finalize immediately!
+                        if any(w in prompt.lower() for w in ["checkout", "check out", "place order", "order now", "order kar do", "final order"]):
+                            response += f"\n\n🎉 **Order Placed Successfully!**\n\nYour shopping list of **{total_count} items** totaling **\\${total:.2f}** has been confirmed for delivery."
+                        elif all_suggestions:
+                            # Unique suggestions
+                            seen_sug = set()
+                            unique_sug = []
+                            for s in all_suggestions:
+                                if s["product_id"] not in seen_sug:
+                                    seen_sug.add(s["product_id"])
+                                    unique_sug.append(s)
+                            
+                            # Update active smart suggestion memory so 'add both' matches screen
+                            st.session_state.session_memory["order"]["last_suggested_items"] = unique_sug[:2]
+                            
+                            sug_items = [f"**{s['name']}** (\\${s['price']:.2f})" for s in unique_sug[:2]]
+                            sug_text = " or ".join(sug_items)
+                            response += f"\n\n💡 **Smart Suggestion**: Shoppers frequently also add {sug_text}. Say *\"add both\"* or *\"add it\"* to include them!"
+                        
+                        top_match = added_summaries[0]
+                    else:
+                        response = f"I searched the catalog for '{prompt}' but couldn't locate matching items. Try asking for basic essentials like milk, bread, eggs, apples, or snacks."
+
+                elif resolved_action.get("confirmation_override"):
+                    response = resolved_action["confirmation_override"]
+                    top_match = action_type
+
+                elif action_type == "VIEW_MENU" or action_type == "GENERAL":
+                    search_prompt = parsed_intent.cleaned_search_query or prompt
+                    search_results = _hybrid_search(search_prompt, top_k=4, parsed_intent=parsed_intent)
                     top_relevance = 0.0
-                    keyword_signal = 0.0
-
-                    if should_search:
-                        search_prompt = parsed_intent.cleaned_search_query or prompt
-                        search_results = _hybrid_search(search_prompt, parsed_intent=parsed_intent)
-                        if (
-                            search_results
-                            and search_results.get("metadatas")
-                            and search_results["metadatas"][0]
-                        ):
-                            top_relevance = 1 - search_results["distances"][0][0]
-                            keyword_signal = _keyword_overlap_score(
-                                prompt, search_results["metadatas"][0][0]
-                            )
-
-                    duration = time.time() - start
-                    is_relevant_match = (
-                        top_relevance >= RELEVANCE_THRESHOLD
-                        or keyword_signal >= KEYWORD_OVERLAP_THRESHOLD
-                    )
-
-                    if not is_relevant_match and not resolved_action["needs_clarification"]:
-                        prev_recs = st.session_state.session_memory.get(
-                            "order", {}
-                        ).get("last_recommendations", [])
-                        if len(prev_recs) == 1:
-                            st.session_state.session_memory["order"][
-                                "last_recommended_item"
-                            ] = prev_recs[0]
-
-                    if (
-                        is_relevant_match
-                        and not resolved_action["needs_clarification"]
-                        and action_type not in CART_MUTATING_ACTIONS
-                    ):
+                    if search_results and search_results.get("metadatas") and search_results["metadatas"][0]:
+                        top_relevance = 1 - search_results["distances"][0][0]
                         register_shown_items(search_results["metadatas"][0])
-
-                    if resolved_action["needs_clarification"]:
-                        response = resolved_action["clarification_message"]
-                    elif resolved_action["cart_changed"]:
-                        response = build_order_confirmation_message(action=action_type)
-                        if action_type == "ADD_TO_CART":
-                            pairing = _suggest_pairing(resolved_action)
-                            if pairing:
-                                response += pairing["text"]
-                                register_shown_items([pairing["metadata"]])
-                    elif should_search and not is_relevant_match:
-                        context = (
-                            "Specific nutrition parameters (like exact sugar grams or recipe ingredients) "
-                            "are not listed in the menu dataset. Gently inform the user and suggest "
-                            "naturally low-sugar or healthy categories like Salads & Healthy Options or unsweetened Beverages."
-                        )
-                        memory_context = build_memory_context()
-                        recent_history = st.session_state.chat_history[-6:]
-                        response = get_ai_response(
-                            st.session_state.llm, prompt, recent_history, context, memory_context,
-                        )
-                    else:
-                        context = _build_enhanced_context(prompt, search_results)
-                        memory_context = build_memory_context()
-                        recent_history = st.session_state.chat_history[-6:]
-                        response = get_ai_response(
-                            st.session_state.llm,
-                            prompt,
-                            recent_history,
-                            context,
-                            memory_context,
-                        )
-
-                    sync_shown_items_from_response(response)
-
-                    st.session_state.interest_score = calculate_interest_score(
-                        prompt,
-                        st.session_state.interest_score,
-                        resolved_action=resolved_action,
-                        search_shown=is_relevant_match,
-                    )
-
-                    if search_results and is_relevant_match:
-                        top_match = search_results["metadatas"][0][0].get("name", "N/A")
+                        top_match = search_results["metadatas"][0][0].get("name", "Item")
                         match_score = top_relevance
-                    else:
-                        top_match = "No menu match"
-                        match_score = 0.0
 
+                    context = _build_enhanced_context(prompt, search_results, parsed_intent=parsed_intent)
+                    memory_context = build_memory_context()
+                    recent_history = st.session_state.chat_history[-6:]
+                    response = get_ai_response(
+                        st.session_state.llm,
+                        prompt,
+                        recent_history,
+                        context,
+                        memory_context,
+                    )
+                    # Sync mentioned items so "add the second one" matches the displayed menu!
+                    sync_shown_items_from_response(response)
+                else:
+                    response = "I've updated your shopping list."
+
+                duration = time.time() - start
+
+                st.session_state.interest_score = calculate_interest_score(
+                    prompt,
+                    st.session_state.interest_score,
+                    resolved_action=resolved_action,
+                    search_shown=bool(search_results),
+                )
+
+            # Record turn in Hybrid Buffer Window (K = 6)
             record_turn("assistant", response)
             st.session_state.chat_history.append({"role": "assistant", "content": response})
             st.session_state.interest_history.append(st.session_state.interest_score)
+            
+            # Read aloud via TTS if enabled
+            render_tts_speaker(response)
 
             st.session_state.query_log.append({
                 "timestamp": datetime.now().strftime("%H:%M:%S"),
@@ -325,81 +229,16 @@ def render_chat_interface(container):
 
             st.rerun()
 
-# ----------------- Complementary Pairing -----------------
-
-def _suggest_pairing(resolved_action):
-    """After a successful ADD_TO_CART, dynamically find a complementary item.
-
-    Uses vector search to find the highest-ranking item from a different category
-    that isn't already in the user's cart (e.g., pairing a pizza with a drink or side).
-    Zero hardcoded category dictionaries needed.
-    """
-    try:
-        order = st.session_state.session_memory["order"]
-        cart = order.get("selected_items", [])
-        if not cart:
-            return None
-
-        # Get the most recently added item
-        last_added = cart[-1]
-        product_id = str(last_added["product_id"])
-        df = st.session_state.df
-        match = df[df["product_id"].astype(str) == product_id]
-        if match.empty:
-            return None
-
-        row = match.iloc[0]
-        item_name = row["name"]
-        item_category = (row.get("category") or "").lower()
-
-        # Collect categories already present in cart
-        cart_categories = {item_category}
-        for ci in cart:
-            cid = str(ci["product_id"])
-            cm = df[df["product_id"].astype(str) == cid]
-            if not cm.empty:
-                cart_categories.add((cm.iloc[0].get("category") or "").lower())
-
-        # Vector search using the item name to find flavor-compatible pairings
-        search_results = _hybrid_search(item_name, top_k=10)
-        if not search_results or not search_results.get("metadatas") or not search_results["metadatas"][0]:
-            return None
-
-        # Pick the top result whose category is NOT in the cart
-        for meta in search_results["metadatas"][0]:
-            result_category = (meta.get("category") or "").lower()
-            result_id = str(meta.get("product_id"))
-
-            # Skip items already in cart or from the same category
-            if result_category in cart_categories or any(str(ci["product_id"]) == result_id for ci in cart):
-                continue
-
-            price = "Price N/A"
-            try:
-                price = f"${float(meta.get('price')):.2f}"
-            except Exception:
-                pass
-
-            text = (
-                f"\n\n---\n"
-                f"**🍽️ Goes great with your order:**\n\n"
-                f"• {meta.get('name', 'N/A')} — {price}\n"
-                f"  Category: {meta.get('category', 'N/A')}\n\n"
-                f"_Say \"add it\" to add this to your cart!_"
-            )
-            return {"text": text, "metadata": meta}
-
-        return None
-    except Exception:
-        return None
-
 
 # ----------------- Hybrid Search -----------------
 
 def _hybrid_search(prompt, top_k=10, parsed_intent=None):
-    preferred_categories = _preferred_categories_for_query(prompt, parsed_intent=parsed_intent)
+    category_pref = (
+        parsed_intent.category_preference.lower()
+        if (parsed_intent and parsed_intent.category_preference)
+        else None
+    )
 
-    avoid_items = _items_to_avoid_for_query(prompt, parsed_intent=parsed_intent)
     log_embedding_generated(prompt, dim=384)
     query_embedding = st.session_state.embedder.encode(
         [prompt], show_progress_bar=False
@@ -420,121 +259,108 @@ def _hybrid_search(prompt, top_k=10, parsed_intent=None):
         if not metadata:
             continue
         score = 1 - vector_distances[index]
-        if _matches_preferred_category(metadata, preferred_categories):
-            score += 0.12
-        if _should_avoid_item(metadata, avoid_items):
-            score -= 0.35
-        combined[metadata["product_id"]] = {"metadata": metadata, "score": score * 0.75}
+        if category_pref and category_pref in (metadata.get("category") or "").lower():
+            score += 0.15
+        combined[metadata["product_id"]] = {"metadata": metadata, "score": score * 0.70}
 
     max_bm25 = max((score for _, score in bm25_ranked), default=0) or 1
     for index, score in bm25_ranked:
         metadata = st.session_state.records[index]
         product_id = metadata.get("product_id")
         bm25_score = score / max_bm25
-        if _matches_preferred_category(metadata, preferred_categories):
+        if category_pref and category_pref in (metadata.get("category") or "").lower():
             bm25_score += 0.15
-        if _should_avoid_item(metadata, avoid_items):
-            bm25_score -= 0.35
         if product_id in combined:
-            combined[product_id]["score"] += bm25_score * 0.25
+            combined[product_id]["score"] += bm25_score * 0.30
         else:
-            combined[product_id] = {"metadata": metadata, "score": bm25_score * 0.25}
+            combined[product_id] = {"metadata": metadata, "score": bm25_score * 0.30}
 
     ranked_items = sorted(combined.values(), key=lambda item: item["score"], reverse=True)
+    
+    # 3. Dynamic Price Range Filtering ("under $5", "below 10 dollars")
+    if parsed_intent and parsed_intent.max_price is not None:
+        ranked_items = [it for it in ranked_items if float(it["metadata"].get("price", 0.0)) <= parsed_intent.max_price]
+    if parsed_intent and parsed_intent.min_price is not None:
+        ranked_items = [it for it in ranked_items if float(it["metadata"].get("price", 0.0)) >= parsed_intent.min_price]
+
+    top_score = ranked_items[0]["score"] if ranked_items else 0.0
+    log_vector_search(prompt, len(ranked_items), top_score)
+
     return {
         "metadatas": [[item["metadata"] for item in ranked_items]],
         "distances": [[max(0.0, min(1.0, 1 - item["score"])) for item in ranked_items]],
     }
 
 
-def _preferred_categories_for_query(prompt, parsed_intent=None):
-    if parsed_intent and parsed_intent.category_preference:
-        return [parsed_intent.category_preference.lower()]
-    return []
-
-
-def _matches_preferred_category(metadata, preferred_categories):
-    if not preferred_categories:
-        return False
-    return (metadata.get("category") or "").lower() in preferred_categories
-
-
-def _items_to_avoid_for_query(prompt, parsed_intent=None):
-    is_new = False
-    if parsed_intent and getattr(parsed_intent, "is_request_for_new_options", False):
-        is_new = True
-
-    if not is_new:
-        return set()
-
-    memory = st.session_state.get("session_memory", {})
-    order = memory.get("order", {})
-
-    avoid = set()
-
-    for product_id in order.get("recommended_items", []):
-        avoid.add(str(product_id))
-
-    last_item = order.get("last_recommended_item")
-    if isinstance(last_item, dict):
-        avoid.add(str(last_item.get("product_id")))
-    elif last_item:
-        avoid.add(str(last_item))
-
-    for product_id in order.get("exclusions", []):
-        avoid.add(str(product_id))
-
-    return avoid
-
-
-def _should_avoid_item(metadata, avoid_items):
-    if not avoid_items:
-        return False
-    return str(metadata.get("product_id")) in avoid_items
-
-
-# ----------------- Analytics & Admin -----------------
+# ----------------- Analytics & Live Shopping Cart Sidebar -----------------
 
 def render_analytics_sidebar(container):
-    st.markdown("### 📈 Live Analytics")
-    if not st.session_state.query_log:
-        st.info("💡 Send a message to see real-time search metrics & latency logs.")
-    else:
-        latest = st.session_state.query_log[-1]
-        with st.container(border=True):
-            st.markdown("**Latest Query**")
-            st.write(f"**User Query:** {latest['user_query']}")
-            if latest["top_match"] == "No menu match":
-                st.write("**Top Match:** No menu match (conversational turn)")
-            else:
-                st.write(f"**Top Match:** {latest['top_match']} ({latest['match_score']:.2%})")
-            st.write(f"**Action:** {latest.get('action', 'N/A')}")
-            st.write(f"**Time:** {latest['duration_ms']} ms")
+    initialize_session_memory()
+    total = get_cart_total()
+    total_count = get_cart_items_count()
+    aisles = get_cart_by_aisles()
 
+    # 1. Live Query & Engagement (Placed at Upper Position)
+    st.markdown("#### 📈 Live Query & Engagement")
     with st.container(border=True):
-        st.markdown("**Intent Score**")
-        st.metric("Current", f"{st.session_state.interest_score}%")
-        st.line_chart(st.session_state.interest_history)
+        if st.session_state.query_log:
+            latest = st.session_state.query_log[-1]
+            st.write(f"**Query:** {latest['user_query']}")
+            c_act, c_lat = st.columns(2)
+            with c_act:
+                st.caption(f"Action: `{latest.get('action', 'N/A')}`")
+            with c_lat:
+                st.caption(f"Latency: `{latest['duration_ms']} ms`")
+            st.divider()
+
+        score = st.session_state.interest_score
+        st.markdown(f"**Engagement Level:** `{score}%`")
+        st.progress(max(0.0, min(1.0, score / 100.0)))
+        if len(st.session_state.interest_history) > 1:
+            st.line_chart(st.session_state.interest_history, height=65)
+
+    st.markdown("---")
+
+    # 2. Live Shopping Cart (Placed Below Engagement)
+    st.markdown("#### 🛒 Live Shopping Cart")
+    if total_count == 0:
+        st.info("Your shopping list is empty. Speak or type to add items!")
+    else:
+        with st.container(border=True):
+            st.markdown(f"**Items:** `{total_count}` | **Total:** `\\${total:.2f}`")
+            
+            for aisle, items in aisles.items():
+                st.caption(f"📍 **{aisle}**")
+                for it in items:
+                    c1, c2 = st.columns([3, 1])
+                    with c1:
+                        st.write(f"• **{it['quantity']}x {it['name']}** ({it['unit']})")
+                    with c2:
+                        st.write(f"\\${it['subtotal']:.2f}")
+
+            bcol1, bcol2 = st.columns(2)
+            with bcol1:
+                if st.button("🧹 Clear", width="stretch"):
+                    clear_cart()
+                    st.rerun()
+            with bcol2:
+                if st.button("🎉 Checkout", type="primary", width="stretch"):
+                    st.balloons()
+                    st.success(f"Order Placed! Total: \\${total:.2f}")
 
 
 def render_admin_panel():
-    with st.expander("⚙️ Admin Panel", expanded=False):
+    with st.expander("⚙️ Catalog Manager & Admin", expanded=False):
         analysis = st.session_state.get("df_analysis")
         if analysis:
-            with st.expander("Data quality summary", expanded=False):
-                st.write(f"Raw rows: {analysis['rows']}")
-                st.write(f"Processed rows: {analysis['processed_rows']}")
-                st.write(f"Removed rows: {analysis['removed_rows']}")
-                if analysis["duplicate_product_ids"]:
-                    st.write(f"Duplicate product IDs removed: {analysis['duplicate_product_ids']}")
-                if analysis["missing_core_values"]:
-                    st.write("Missing core values:")
-                    st.json(analysis["missing_core_values"])
+            st.write(f"Total Products: `{analysis['processed_rows']}` across 5 Aisles")
+            if analysis.get("categories"):
+                st.json(analysis["categories"])
 
         df = st.data_editor(st.session_state.df, num_rows="dynamic", width="stretch")
-        if st.button("Save to CSV"):
+        if st.button("💾 Save Catalog to CSV"):
             try:
                 df.to_csv(DATA_FILE_PATH, index=False)
-                st.success("Changes saved!")
+                st.success("Catalog changes saved successfully!")
             except Exception as e:
                 st.error(f"Save failed: {e}")

@@ -10,11 +10,17 @@ import sys
 import time
 import os
 
+# Suppress HuggingFace progress bars and warnings in sub-processes
+os.environ["HF_HUB_DISABLE_PROGRESS_BARS"] = "1"
+os.environ["HF_HUB_DISABLE_SYMLINKS_WARNING"] = "1"
+os.environ["TOKENIZERS_PARALLELISM"] = "false"
+os.environ["TRANSFORMERS_VERBOSITY"] = "error"
+
 project_root = os.path.dirname(os.path.abspath(__file__))
 python_exe = sys.executable
 
 print("=" * 70)
-print("  STARTING FOODIEBOT FULL-STACK SYSTEM (FASTAPI + STREAMLIT)")
+print("  STARTING VOICE COMMAND SHOPPING ASSISTANT")
 print("=" * 70)
 
 # Step 1: Launch FastAPI Backend Server on Port 8000
@@ -34,15 +40,19 @@ streamlit_proc = subprocess.Popen(
 )
 
 print("\n" + "=" * 70)
-print("  FOODIEBOT SYSTEM RUNNING!")
-print("  - Streamlit UI:  http://127.0.0.1:8501")
-print("  - Swagger API:   http://127.0.0.1:8000/docs")
+print("  VOICE COMMAND SHOPPING ASSISTANT RUNNING!")
+print("  - Streamlit Web UI: http://127.0.0.1:8501")
+print("  - Swagger API Docs:  http://127.0.0.1:8000/docs")
 print("=" * 70 + "\n")
 
 try:
     streamlit_proc.wait()
 except KeyboardInterrupt:
-    print("\nShutting down FoodieBot servers...")
-    fastapi_proc.terminate()
-    streamlit_proc.terminate()
+    print("\nReceived shutdown signal...")
+finally:
+    print("Shutting down FoodieBot servers...")
+    for proc in (fastapi_proc, streamlit_proc):
+        if proc and proc.poll() is None:
+            proc.terminate()
     print("Shutdown complete.")
+

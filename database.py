@@ -5,9 +5,9 @@ import chromadb
 from sentence_transformers import SentenceTransformer
 from rank_bm25 import BM25Okapi
 from data_pipeline import load_and_process_menu_data
-from interest_model import _load_encoder
+from interest_model import get_cached_encoder
 
-DATA_FILE_PATH = "fast_food_products.csv"
+DATA_FILE_PATH = "grocery_shopping_catalog3.csv"
 
 @st.cache_resource
 def initialize_services():
@@ -15,7 +15,7 @@ def initialize_services():
     try:
         df, analysis = load_and_process_menu_data(DATA_FILE_PATH)
     except FileNotFoundError:
-        st.error("CSV file not found. Please place 'fast_food_products.csv' in the same folder as app.py.")
+        st.error("CSV file not found. Please place 'grocery_shopping_catalog3.csv' in the same folder as app.py.")
         return None, None, None, None, None, None
     except Exception as e:
         st.error(f"Error loading data: {e}")
@@ -36,7 +36,7 @@ def initialize_services():
         return None, None, None, None, None, None
 
     try:
-        embedder = _load_encoder()
+        embedder = get_cached_encoder()
     except Exception as e:
         st.error(f"Failed to load embedding model: {e}")
         return None, None, None, None, None, None
@@ -48,14 +48,14 @@ def initialize_services():
 
         documents = [
             f"Item Name: {r.get('name', '')}. "
+            f"Category: {r.get('category', '')}. "
+            f"Unit: {r.get('unit', '')}. "
+            f"Price: ${r.get('price', '')}. "
             f"Description: {r.get('description', '')}. "
-            f"Ingredients: {r.get('ingredients', '')}. "
-            f"Calories: {r.get('calories', 'N/A')}. "
-            f"Allergens: {r.get('allergens', 'None listed')}. "
             f"Dietary Tags: {r.get('dietary_tags', '')}."
             for r in metadatas
         ]
-        embeddings = embedder.encode(documents).tolist()
+        embeddings = embedder.encode(documents, show_progress_bar=False).tolist()
         collection.add(documents=documents, embeddings=embeddings, metadatas=metadatas, ids=ids)
 
         tokenized_documents = [

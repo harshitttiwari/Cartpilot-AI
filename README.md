@@ -1,262 +1,202 @@
-# 🤖 FoodieBot — Intelligent Full-Stack AI Restaurant Concierge
+# 🛒 Agentic Voice Command Shopping Assistant
+### *Multilingual AI-Powered Supermarket Concierge, Hybrid Search & Dynamic Cart State Manager*
 
 [![Python](https://img.shields.io/badge/Python-3.10%2B-blue.svg?style=flat-square&logo=python)](https://www.python.org/)
+[![Streamlit](https://img.shields.io/badge/Streamlit-1.40%2B-FF4B4B.svg?style=flat-square&logo=streamlit)](https://streamlit.io/)
 [![FastAPI](https://img.shields.io/badge/FastAPI-0.110%2B-009688.svg?style=flat-square&logo=fastapi)](https://fastapi.tiangolo.com/)
-[![Streamlit](https://img.shields.io/badge/Streamlit-1.36%2B-FF4B4B.svg?style=flat-square&logo=streamlit)](https://streamlit.io/)
 [![ChromaDB](https://img.shields.io/badge/ChromaDB-0.5%2B-orange.svg?style=flat-square)](https://www.trychroma.com/)
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg?style=flat-square)](LICENSE)
-
-**FoodieBot** is a production-ready, full-stack AI restaurant assistant powered by **Hybrid Retrieval-Augmented Generation (Dense Vector + Sparse Lexical RAG)**, **Dual LLM Provider Failover (Gemini 2.5 Flash + Groq Llama 3.3-70B)**, **Zero-Shot Pydantic Intent Reasoning**, and **Machine Learning Purchase Intent Scoring**.
-
-It seamlessly serves both human diners via a responsive **Streamlit Web UI** and external client applications via a **FastAPI REST API**.
+[![HuggingFace](https://img.shields.io/badge/SentenceTransformers-All--MiniLM--L6--v2-yellow.svg?style=flat-square&logo=huggingface)](https://huggingface.co/sentence-transformers/all-MiniLM-L6-v2)
+[![LangChain](https://img.shields.io/badge/LangChain-Enabled-green.svg?style=flat-square)](https://www.langchain.com/)
+[![License: MIT](https://img.shields.io/badge/License-MIT-purple.svg?style=flat-square)](LICENSE)
 
 ---
 
-## 🌟 Key Features & Innovations
+## 📖 Overview
 
-### 🧠 1. Dual-Provider LLM Resilience with Automatic Failover
-- **Primary Provider**: Google Gemini (`gemini-2.5-flash`) for lightning-fast, high-reasoning conversational responses.
-- **Failover Provider**: Groq Llama 3.3 (`llama-3.3-70b-versatile`) automatically triggered on `429 Rate Limit` or quota exhaustion.
-- **Zero-Downtime Reliability**: Guarantees uninterrupted customer service even during upstream API degradation.
-
-### 🔎 2. Hybrid RAG Search Engine (Dense + Sparse)
-- **Dense Vector Search**: Powered by `ChromaDB` and 384-dimensional `paraphrase-multilingual-MiniLM-L12-v2` embeddings for deep semantic understandability across English and Hinglish/multilingual queries.
-- **Sparse Lexical Search**: Powered by `BM25Okapi` to capture exact menu item names, product IDs, and specific ingredients.
-- **Reciprocal Score Fusion**: Weighted score combination ($75\%$ Vector + $25\%$ BM25) with dynamic category boost ($+12\%$) and contextual exclusion penalties ($-35\%$).
-
-### 🎯 3. Zero-Hardcoding Pydantic Intent Architecture
-- **100% LLM-Driven Parsing**: Employs `parse_intent_with_llm` to map raw user text into structured `ParsedUserIntent` Pydantic schemas.
-- **No Brittle Keyword Lists**: Dynamically handles typos (*"zero suger"* $\rightarrow$ *"zero sugar"*), informal slang, multi-lingual queries (*"thoda spicy chicken option"*), and ambiguous pronoun references without hardcoded string arrays.
-- **Dynamic Option Exclusion**: Identifies follow-up requests for alternative dishes (`is_request_for_new_options: bool`) and automatically suppresses previously displayed items to ensure fresh recommendations.
-
-### 🔄 4. Real-Time Response Item Synchronization
-- **Zero-Hallucination Pronoun Resolution**: `sync_shown_items_from_response` scans LLM text responses in real-time and anchors mentioned items directly to `last_recommended_item`.
-- **Seamless Context Anchoring**: Commands like *"add it"*, *"order the 1st option"*, or *"just order my current item"* instantly resolve to the correct menu product.
-
-### 📊 5. Machine Learning Purchase Interest Scoring
-- **Dynamic Trajectory Modeling**: Uses Logistic Regression and session features to score customer purchase intent ($50 \rightarrow 100$) in real-time.
-- **Live Visual Analytics**: Tracks user interest curves, intent progression, and request latencies live on the Streamlit Analytics dashboard.
+**Agentic Voice Command Shopping Assistant** is an intelligent, voice-first grocery concierge and shopping list manager built for modern retail and e-commerce. It features real-time in-browser speech recognition, multilingual entity extraction (English India/US, Hindi, and Hinglish), hybrid RAG search across 1,100 catalog products, cross-aisle graph recommendations, and zero-hallucination deterministic cart state management.
 
 ---
 
-## 🏗️ Architecture Overview
+## 🌟 Key Capabilities & Features
+
+### 🎙️ 1. Real-Time Voice Processing & Synthesis (STT & TTS)
+* **Web Speech API Controller**: Real-time browser microphone capturing voice input with listening pulse animations.
+* **Multilingual Speech Recognition**: Default configured for **English (India) 🇮🇳 (`en-IN`)**, **Hindi (हिंदी) 🇮🇳 (`hi-IN`)**, and **English (US) 🇺🇸 (`en-US`)**.
+* **Text-to-Speech (TTS)**: Reads out order confirmations, subtotals, and smart recommendations.
+
+### 🧠 2. Agentic NLP Parser & Multilingual Understanding
+* **Varied & Conversational Phrasing**: Understands natural phrasing (*"We are running low on butter"*, *"I need eggs and bread"*, *"Mujhe 2 packet doodh aur atta chahiye"*).
+* **Multi-Item & Quantity Extraction**: Parses multiple commodities, package units, and numerical quantities in a single breath with phonetic number disambiguation (*"add to whole milk"* ➡️ `2x whole milk`).
+* **Dynamic Acoustic Error & Slang Handling**: Handles speech mishears dynamically using active cart context.
+
+### 🔍 3. Hybrid RAG Search & Price Range Filtering
+* **Dense + Lexical Retrieval**: Combines **384-dimensional dense vectors** (`SentenceTransformers all-MiniLM-L6-v2` in ChromaDB) with **BM25 lexical ranking**.
+* **Dietary Tag Boosts**: Supports filters for `[organic]`, `[gluten_free]`, `[keto_friendly]`, `[vegan]`, `[sugar_free]`, and `[low_calorie]`.
+* **Price Range Constraints**: Filters search candidates based on voice constraints (e.g. *"Find snacks under $5"*).
+
+### 💡 4. Cross-Aisle Smart Suggestions & Recommendations
+* **Knowledge Graph Engine**: Built using `frequently_bought_together` graph relationships from the 1,100 product catalog.
+* **One-Phrase Conversational Follow-up**: Supports immediate inclusion via *"add both"*, *"add it"*, or *"add the first one"*.
+* **Zero-Hallucination Ordinal Guard**: Validates list bounds so out-of-range commands (e.g., *"add the 3rd one"* when only 1 was shown) do not hallucinate.
+
+### 🧺 5. Deterministic Cart Engine & Aisle Categorization
+* **Supermarket Aisle Categorization**: Organizes items across:
+  * 🥛 **Dairy & Eggs**
+  * 🥦 **Produce**
+  * 🍞 **Bakery**
+  * 🍚 **Pantry & Staples**
+  * 🥤 **Beverages & Snacks**
+* **Zero-Hallucination Arithmetic**: All calculations ($\text{Subtotal} = \text{Qty} \times \text{Price}$) are evaluated deterministically in Python.
+
+### 📈 6. Real-Time Engagement & Intent Scoring
+* **Dual-Layer Analytics**: Blends SentenceTransformer semantic sentiment with session state milestones.
+* **Calibrated Trajectory**: Tracks interest smoothly from neutral (50%) to high purchase intent (95%–100%).
+
+---
+
+## 🏗️ System Architecture
 
 ```mermaid
-graph TD
-    User([👤 User / Web Browser / API Client])
-
-    subgraph Frontends & REST Interfaces
-        UI["🖥️ Streamlit Web App (Port 8501)"]
-        API["⚡ FastAPI REST Backend (Port 8000)"]
+flowchart TD
+    User([🎙️ Spoken Voice or ⌨️ Text Input])
+    
+    subgraph UI_Layer ["Frontend UI Layer (Streamlit)"]
+        Mic["Microphone Web Speech Controller (en-IN / hi-IN / en-US)"]
+        Chat["Responsive Chat Interface & Action Dispatcher"]
+        Sidebar["Live Query Analytics & Aisle-Organized Cart"]
+        TTS["🔊 Audio TTS Synthesis Engine"]
     end
 
-    subgraph Core Processing Pipeline
-        Intent["🧠 Pydantic Intent Parser (LLM Zero-Shot)"]
-        Session["💾 Session Memory & Pronoun Sync"]
-        Hybrid["🔎 Hybrid RAG Search (ChromaDB + BM25)"]
-        Interest["📊 ML Interest Score Model (Logistic Regression)"]
+    subgraph NLP_Pipeline ["NLP & Hybrid Memory Engine"]
+        LLM_Parser["🧠 Pydantic Intent Parser (Gemini Flash + Groq Failover)"]
+        Memory["💾 Deterministic Cart Memory + K=6 Sliding Buffer Window"]
+        Graph["💡 Cross-Aisle Suggestion Graph (frequently_bought_together)"]
+        Engagement["📈 SentenceTransformer Intent & Sentiment Engine"]
     end
 
-    subgraph LLM Dual-Provider Adapter
-        Gemini["🟢 Gemini 2.5 Flash (Primary)"]
-        Groq["🟡 Groq Llama 3.3-70B (Failover 429)"]
+    subgraph Storage_Engine ["Catalog & Search Engine"]
+        Chroma["ChromaDB Vector Store (384-dim Embeddings)"]
+        BM25["BM25 Lexical Keyword Search"]
+        CSV["grocery_shopping_catalog3.csv (1,100 Items Across 5 Aisles)"]
     end
 
-    User --> UI
-    User --> API
-    UI --> Intent
-    API --> Intent
-    Intent --> Session
-    Session --> Hybrid
-    Hybrid --> Gemini
-    Gemini -- Quota Exceeded (429) --> Groq
-    Gemini --> Interest
-    Groq --> Interest
-    Interest --> UI
-    Interest --> API
+    User --> Mic
+    User --> Chat
+    Mic --> Chat
+    Chat --> LLM_Parser
+    LLM_Parser --> Memory
+    Memory --> Chroma
+    Memory --> BM25
+    CSV --> Chroma
+    CSV --> BM25
+    Memory --> Graph
+    Chat --> Engagement
+    Engagement --> Sidebar
+    Memory --> Sidebar
+    Graph --> Chat
+    Chat --> TTS
 ```
 
 ---
 
-## 📂 Project Structure
+## 📋 Assessment Requirements Compliance Matrix
 
-```text
-FoodieBot/
-├── run_app.py             # Master Launcher (Starts FastAPI & Streamlit concurrently)
-├── api.py                 # FastAPI REST Backend & Swagger Endpoint (/docs)
-├── app.py                 # Main Streamlit UI Entry Point & CSS Theme Engine
-├── bot_logic.py           # Dual LLM Provider Adapter & Pydantic Intent Engine
-├── database.py            # Hybrid RAG Engine (ChromaDB Vector DB + BM25 Lexical)
-├── session_memory.py      # Session Memory Manager & Response Item Sync
-├── interest_model.py       # ML Interest Scoring Model (Logistic Regression)
-├── ui_components.py       # UI Renderers, Analytics Dashboard & Admin Data Editor
-├── log.py                 # Color-Coded Terminal Diagnostic Logger
-├── fast_food_products.csv # Production Restaurant Menu Dataset
-├── requirements.txt       # Project Python Dependencies
-└── .env                   # Environment Credentials & Secrets (Local Only)
-```
+| Requirement from Assessment | Project Implementation | Key Files & Functions |
+| :--- | :--- | :--- |
+| **1. Voice Input (STT & NLP)** | Web Speech API in-browser recorder, multilingual Indian/US English & Hindi support. | [`voice_component.py`](file:///x:/Voice%20Command/voice_component.py), [`bot_logic.py`](file:///x:/Voice%20Command/bot_logic.py) (`parse_intent_with_llm`) |
+| **2. Smart Suggestions** | Cross-aisle co-occurrence graph (`frequently_bought_together`), pronoun resolvers (*"add both"*). | [`data_pipeline.py`](file:///x:/Voice%20Command/data_pipeline.py) (`get_recommendation_graph`), [`session_memory.py`](file:///x:/Voice%20Command/session_memory.py) |
+| **3. Shopping List Management** | Multi-item addition, dynamic removal, exact math, aisle categorization. | [`session_memory.py`](file:///x:/Voice%20Command/session_memory.py) (`add_item_to_cart`, `remove_item_from_cart`) |
+| **4. Voice-Activated Search** | Brand, size, dietary tags, and price filtering (*"under $5"*). | [`ui_components.py`](file:///x:/Voice%20Command/ui_components.py) (`_hybrid_search`), [`database.py`](file:///x:/Voice%20Command/database.py) |
+| **5. Clean UI/UX & Feedback** | Streamlit layout with live metrics, audio feedback, and persistent logging. | [`app.py`](file:///x:/Voice%20Command/app.py), [`ui_components.py`](file:///x:/Voice%20Command/ui_components.py), [`log.py`](file:///x:/Voice%20Command/log.py) |
+| **6. REST API & Hosting** | FastAPI backend with Swagger docs, ready for Docker/Cloud deployment. | [`api.py`](file:///x:/Voice%20Command/api.py) |
 
 ---
 
-## 🚀 Quick Start & Installation
+## 🚀 Quickstart Guide
 
-### Prerequisites
-- **Python 3.10+**
-- **Git**
+### 1. Prerequisites & Virtual Environment
 
-### 1. Clone the Repository
-```bash
-git clone https://github.com/harshitttiwari/FoodieBot.git
-cd FoodieBot
-```
+Ensure you have **Python 3.10+** installed:
 
-### 2. Create Virtual Environment & Install Dependencies
-```bash
-# Create virtual environment
+```powershell
+# Clone the repository
+git clone https://github.com/<your-username>/agentic-voice-shopping-assistant.git
+cd agentic-voice-shopping-assistant
+
+# Create and activate virtual environment
 python -m venv venv
-
-# Activate virtual environment
-# On Windows:
 .\venv\Scripts\activate
-# On Linux/macOS:
-source venv/bin/activate
 
-# Install required dependencies
+# Install dependencies
 pip install -r requirements.txt
 ```
 
-### 3. Configure Environment Variables
-Create a `.env` file in the root directory:
+### 2. Environment Configuration
+
+Create a `.env` file in the project root:
+
 ```env
+# Gemini API Key (Primary)
 GEMINI_API_KEY=your_gemini_api_key_here
+GEMINI_MODEL=gemini-2.5-flash-lite
+
+# Groq API Key (High-Speed Fallback)
 GROQ_API_KEY=your_groq_api_key_here
-```
-*(Note: FoodieBot will run with Gemini as primary and failover to Groq if rate limits occur.)*
-
----
-
-## 🖥️ Running FoodieBot
-
-### Option A: Run Full-Stack (FastAPI + Streamlit together) — **Recommended**
-Execute the master launcher script to run both backend REST services and frontend UI in one unified terminal:
-
-```bash
-python run_app.py
+GROQ_MODEL=openai/gpt-oss-120b
 ```
 
-- **Streamlit Web UI**: [http://localhost:8501](http://localhost:8501)
-- **FastAPI REST API**: [http://127.0.0.1:8000](http://127.0.0.1:8000)
-- **Interactive Swagger API Docs**: [http://127.0.0.1:8000/docs](http://127.0.0.1:8000/docs)
+### 3. Running the Application
 
----
-
-### Option B: Run Services Separately
-
-#### Run Streamlit Web App Only:
-```bash
+#### 🖥️ Streamlit Web Application:
+```powershell
 streamlit run app.py
 ```
+> Open **`http://localhost:8501`** in Google Chrome or Microsoft Edge for Web Speech API microphone support.
 
-#### Run FastAPI REST Backend Only:
-```bash
+#### 🔌 FastAPI REST API Backend:
+```powershell
 uvicorn api:app --reload --port 8000
 ```
+> Interactive Swagger API Documentation: **`http://localhost:8000/docs`**
 
 ---
 
-## 🌐 REST API Endpoints Reference
+## 🗣️ Comprehensive Test Suite (10 Real-World Scenarios)
 
-FoodieBot provides a clean, fully typed REST API with automatic interactive OpenAPI/Swagger documentation at `http://localhost:8000/docs`.
-
-| Endpoint | Method | Description |
-| :--- | :--- | :--- |
-| `/health` | `GET` | System health check, service readiness, and dataset stats. |
-| `/api/chat` | `POST` | Process chat messages, run RAG search, update cart & interest score. |
-| `/api/menu` | `GET` | Query full or category-filtered restaurant menu items. |
-
-### Example REST Payload (`POST /api/chat`)
-```json
-{
-  "message": "hnji tell something thoda spicy chicken option",
-  "chat_history": []
-}
-```
-
-### Example REST Response
-```json
-{
-  "response": "Here's a delicious spicy option for you:\n\n• Southern Biscuit Chicken Sandwich – $10.59\n     Calories: 820\n     Category: Fried Chicken\n     Allergens: Contains: gluten;dairy",
-  "interest_score": 59,
-  "action": "VIEW_MENU",
-  "cart": [],
-  "duration_ms": 342
-}
-```
+| # | Test Scenario | Voice / Text Input | Expected System Behavior |
+| :-: | :--- | :--- | :--- |
+| **1** | **Multi-Item Breakfast Add** | *"Add 2 croissants, 1 coffee, and 2 orange juice"* | Extracts 3 items, applies quantities, categorizes into Bakery & Beverages, triggers pairing suggestions. |
+| **2** | **Smart Suggestion Inclusion** | *"Add both"* | Deterministically adds both suggested companion items into the live cart. |
+| **3** | **Hindi Cooking Recipe** | *"Mujhe paneer butter masala ke liye 2 packet paneer aur butter chahiye"* | Translates Hindi commodity names, adds 2x Paneer and 1x Butter to Dairy & Eggs. |
+| **4** | **Dietary & Niche Discovery** | *"Show me gluten-free snacks and low-calorie drinks"* | Hybrid search filters across 1,100 items by dietary tags and returns structured options. |
+| **5** | **Zero-Hallucination Guard** | *"Add the fifth one"* (when only 2 shown) | Validates recommendation list bounds and refuses to hallucinate unshown items. |
+| **6** | **Positional Selection** | *"Add the second one"* | Accurately adds Item #2 from the previous recommendation list. |
+| **7** | **Price-Filtered Search** | *"Find organic fruits under $6"* | Retrieves only items tagged organic with price $\le \$6.00$. |
+| **8** | **Dynamic Removal** | *"Remove coffee from my list"* | Identifies and removes Coffee, recalculates subtotal, and adjusts engagement score downward. |
+| **9** | **Hindi Clear Cart** | *"Sab delete kar do, empty cart"* | Wipes the active basket to $0.00 and drops engagement score to 30%. |
+| **10** | **Compound Add & Checkout** | *"Add 2 packets of milk and checkout"* | Adds milk and confirms order delivery in a single response with celebration animation. |
 
 ---
 
-## 💻 Terminal Logging & Diagnostics (`log.py`)
+## 📁 Repository Structure
 
-FoodieBot features real-time, color-coded terminal diagnostics so developers can inspect inner system state during live chats:
-
-```text
-======================================================================
-  STARTING FOODIEBOT FULL-STACK SYSTEM (FASTAPI + STREAMLIT)
-======================================================================
-[INFO] LLM Provider Active: Gemini Flash (gemini-2.5-flash)
-[EMBED] Generated 384-dim vector embedding for: 'something light and healthy'
-[VECTOR] Retrieved 10 items | Top Relevance: 87.42%
-[INTENT] Action: VIEW_MENU | Query: 'healthy options'
-[SCORE] Interest Score Updated: 50 -> 61 (+11)
 ```
-
-If Gemini encounters a rate limit (`429`), the logger immediately flags the failover event:
-```text
-[WARN] Gemini Flash Quota Exceeded (429) -> Failing over to Groq Llama 3.3 (llama-3.3-70b-versatile)
+├── app.py                         # Streamlit application layout & viewport styles
+├── voice_component.py             # Microphone Web Speech API controller & TTS engine
+├── bot_logic.py                   # LLM intent parser, conversational prompt & fallback engine
+├── session_memory.py              # Deterministic cart engine, aisle manager & K=6 buffer memory
+├── ui_components.py               # Live shopping cart sidebar, hybrid search & chat UI
+├── database.py                    # ChromaDB vector store, BM25 indexing & embedding loader
+├── data_pipeline.py               # Preprocessing, synonym dictionary & recommendation graph
+├── interest_model.py              # Dual-layer ML sentiment & engagement score engine
+├── log.py                         # Colorized console formatter & foodiebot.log file writer
+├── api.py                         # FastAPI REST endpoints & Pydantic models
+├── grocery_shopping_catalog3.csv  # 1,100 Supermarket grocery items across 5 aisles
+├── requirements.txt               # Production dependencies
+└── README.md                      # Project documentation
 ```
-
----
-
-## 🧪 Example Conversational Capabilities
-
-- **Natural Cravings & Recommendations**:
-  > 👤 *"I want something light and healthy"*  
-  > 🤖 Suggests `Caprese Balsamic Salad` or `Superfood Berry Spinach Salad` with full calories and allergen info.
-
-- **Dynamic Follow-up & Option Switching**:
-  > 👤 *"Any more option??"*  
-  > 🤖 Excludes previously shown salads and dynamically returns fresh alternatives like `Zesty Lentil Protein Bowl`.
-
-- **Pronoun Cart Additions**:
-  > 👤 *"Add the 1st option"* or *"add it"*  
-  > 🤖 Adds the exact item to the cart, calculates totals, and suggests a complementary beverage/side pairing.
-
-- **Checkout Intent Resolution**:
-  > 👤 *"No just order my current item"*  
-  > 🤖 Confirms checkout for the items in the cart without getting confused by negative prefixes.
-
----
-
-## 🤝 Contributing
-
-Contributions are welcome! Please follow these steps:
-1. Fork the repository
-2. Create your feature branch (`git checkout -b feature/AmazingFeature`)
-3. Commit your changes (`git commit -m 'Add some AmazingFeature'`)
-4. Push to the branch (`git push origin feature/AmazingFeature`)
-5. Open a Pull Request
 
 ---
 
 ## 📄 License
-
-Distributed under the **MIT License**. See [`LICENSE`](LICENSE) for more information.
-
----
-
-## 🔗 Links & Resources
-
-- **GitHub Repository**: [harshitttiwari/FoodieBot](https://github.com/harshitttiwari/FoodieBot)
-- **FastAPI Documentation**: [FastAPI Docs](https://fastapi.tiangolo.com/)
-- **Streamlit Documentation**: [Streamlit Docs](https://docs.streamlit.io/)
-- **Chroma Vector Database**: [ChromaDB Docs](https://docs.trychroma.com/)
+This project is open-source and available under the **MIT License**.

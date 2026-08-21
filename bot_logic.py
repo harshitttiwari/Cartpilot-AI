@@ -1,14 +1,18 @@
 # bot_logic.py
 import os
 import re
+import json
 from types import SimpleNamespace
+from typing import Literal, List, Optional
 import streamlit as st
+from pydantic import BaseModel, Field
 from google import genai
 from groq import Groq
-from interest_model import predict_intent
+from log import log_llm_provider, log_llm_failover, log_intent_parsed, log_interest_score
+
 
 # ---------------------------------------------------------------------------
-# LLM Initialization
+# LLM Initialization (Gemini with Groq Fallback)
 # ---------------------------------------------------------------------------
 
 @st.cache_resource
@@ -16,15 +20,15 @@ def initialize_llm():
     """
     Initializes a dual-provider LLM adapter.
     Primary: Gemini (google-genai)
-    Fallback: Groq llama-3.3-70b-versatile  (on 429 / quota errors)
+    Fallback: Groq llama-3.3-70b-versatile (on 429 / quota errors)
     """
     gemini_key = os.getenv("GEMINI_API_KEY")
-    groq_key   = os.getenv("GROQ_API_KEY")
-    model_name = os.getenv("GEMINI_MODEL", "gemini-2.0-flash-lite")
-    groq_model = os.getenv("GROQ_MODEL",   "openai/gpt-oss-20b")
+    groq_key = os.getenv("GROQ_API_KEY")
+    model_name = os.getenv("GEMINI_MODEL", "gemini-2.5-flash-lite")
+    groq_model = os.getenv("GROQ_MODEL", "llama-3.3-70b-versatile")
 
     gemini_client = None    
-    groq_client   = None
+    groq_client = None
 
     if gemini_key:
         try:
@@ -54,111 +58,143 @@ def initialize_llm():
     )
 
 
-from log import log_llm_provider, log_llm_failover, log_intent_parsed, log_interest_score
-
-
 class _DualProviderAdapter:
     """
     Tries Gemini first. On quota / rate-limit errors (429 / RESOURCE_EXHAUSTED)
     automatically falls back to Groq llama-3.3-70b-versatile.
     """
-
     def __init__(self, gemini_client, gemini_model, groq_client, groq_model):
         self.gemini_client = gemini_client
-        self.gemini_model  = gemini_model
-        self.groq_client   = groq_client
-        self.groq_model    = groq_model
+        self.gemini_model = gemini_model
+        self.groq_client = groq_client
+        self.groq_model = groq_model
 
     def invoke(self, prompt: str) -> SimpleNamespace:
+        # 1. Try Gemini models
         if self.gemini_client:
-            try:
-                response = self.gemini_client.models.generate_content(
-                    model=self.gemini_model,
-                    contents=prompt,
-                    config={"temperature": 0.2},
-                )
-                log_llm_provider("Gemini Flash", self.gemini_model)
-                return SimpleNamespace(content=getattr(response, "text", ""))
-            except Exception as e:
-                error_str = str(e)
-                if _is_quota_error(error_str):
-                    log_llm_failover("Gemini Flash", "Groq Llama 3.3", "Quota Exceeded (429)")
-                else:
-                    log_llm_failover("Gemini Flash", "Groq Llama 3.3", error_str)
+            for g_model in [self.gemini_model, "gemini-2.5-flash", "gemini-1.5-flash", "gemini-2.0-flash"]:
+                try:
+                    response = self.gemini_client.models.generate_content(
+                        model=g_model,
+                        contents=prompt,
+                        config={"temperature": 0.2},
+                    )
+                    log_llm_provider("Gemini Flash", g_model)
+                    return SimpleNamespace(content=getattr(response, "text", ""))
+                except Exception as e:
+                    error_str = str(e)
+                    if _is_quota_error(error_str):
+                        log_llm_failover("Gemini Flash", "Groq Llama", "Quota Exceeded (429)")
+                    continue
 
+        # 2. Try Groq fast fallback models
         if self.groq_client:
-            try:
-                completion = self.groq_client.chat.completions.create(
-                    model=self.groq_model,
-                    messages=[{"role": "user", "content": prompt}],
-                    temperature=0.2,
-                    max_tokens=1024,
-                )
-                log_llm_provider("Groq Llama 3.3", self.groq_model)
-                text = completion.choices[0].message.content or ""
-                return SimpleNamespace(content=text)
-            except Exception as groq_err:
-                raise RuntimeError(f"Both providers failed. Groq error: {groq_err}")
+            for q_model in ["openai/gpt-oss-120b", "openai/gpt-oss-20b", "qwen/qwen3.6-27b", "groq/compound-mini"]:
+                try:
+                    completion = self.groq_client.chat.completions.create(
+                        model=q_model,
+                        messages=[{"role": "user", "content": prompt}],
+                        temperature=0.2,
+                        max_tokens=1024,
+                    )
+                    log_llm_provider("Groq OSS", q_model)
+                    text = completion.choices[0].message.content or ""
+                    if text:
+                        return SimpleNamespace(content=text)
+                except Exception:
+                    continue
 
-import json
-from typing import Literal, List, Optional
-from pydantic import BaseModel, Field
+        raise RuntimeError("LLM services temporarily unavailable. Please try again.")
+
+
+def _is_quota_error(error_str: str) -> bool:
+    signals = ["429", "RESOURCE_EXHAUSTED", "quota", "rate limit", "rate_limit"]
+    lowered = error_str.lower()
+    return any(s in lowered for s in signals)
+
+
+# ---------------------------------------------------------------------------
+# Multilingual NLP Intent & Entity Schema
+# ---------------------------------------------------------------------------
+
+class ItemSpec(BaseModel):
+    item_name: str
+    quantity: int = 1
+    unit_hint: Optional[str] = None
 
 
 class ParsedUserIntent(BaseModel):
-    action: Literal["VIEW_MENU", "ADD_TO_CART", "REMOVE_ITEM", "CHECKOUT", "ASK_ALLERGEN", "COMPARE_ITEMS", "GENERAL"] = "GENERAL"
-    dietary_restrictions: List[str] = Field(default_factory=list)
+    action: Literal["ADD_TO_CART", "REMOVE_ITEM", "VIEW_MENU", "VIEW_CART", "CLEAR_CART", "CHECKOUT", "GENERAL"] = "GENERAL"
+    items: List[ItemSpec] = Field(default_factory=list)
+    dietary_preferences: List[str] = Field(default_factory=list)
     category_preference: Optional[str] = None
     target_reference: Optional[str] = None
-    quantity: int = 1
+    max_price: Optional[float] = None
+    min_price: Optional[float] = None
+    language_detected: str = "en"
     cleaned_search_query: str = ""
     is_request_for_new_options: bool = False
 
 
-def parse_intent_with_llm(llm, user_text: str) -> ParsedUserIntent:
+def parse_intent_with_llm(llm, user_text: str, current_cart_items: Optional[List[dict]] = None) -> ParsedUserIntent:
     """
-    Dynamically parses user input using the LLM into a structured Pydantic schema.
-    Handles any typos ("suger", "ingidwnints"), slang, Hindi/Urdu, or complex phrasing
-    without a single hardcoded keyword list.
+    Parses user voice or text input using LLM into structured Pydantic schema.
+    Dynamically resolves speech homophones, multilingual context, and references using active cart state.
     """
     if not user_text or not user_text.strip():
         return ParsedUserIntent()
 
-    prompt = f"""
-You are an expert NLP Intent Parser for a restaurant chatbot called FoodieBot.
-Analyze the user's message and return a JSON object matching this schema:
+    cart_summary = "Empty (0 items)"
+    if current_cart_items:
+        cart_summary = ", ".join(f"{it.get('quantity', 1)}x {it.get('name', '')}" for it in current_cart_items)
 
+    prompt = f"""
+You are an intelligent NLP Parser and Conversational Reasoner for a Voice Command Shopping Assistant.
+Analyze the user's voice message with awareness of their current shopping list:
+
+CURRENT CART CONTEXT:
+[{cart_summary}]
+
+Return a JSON object matching this schema:
 {{
-  "action": "VIEW_MENU" | "ADD_TO_CART" | "REMOVE_ITEM" | "CHECKOUT" | "ASK_ALLERGEN" | "COMPARE_ITEMS" | "GENERAL",
-  "dietary_restrictions": [strings],
-  "category_preference": string or null,
-  "target_reference": string or null,
-  "quantity": integer (default 1),
-  "cleaned_search_query": string,
-  "is_request_for_new_options": boolean (true if user asks for alternative, different, or more options/suggestions in any phrasing or language)
+  "action": "ADD_TO_CART" | "REMOVE_ITEM" | "VIEW_MENU" | "VIEW_CART" | "CLEAR_CART" | "CHECKOUT" | "GENERAL",
+  "items": [
+    {{"item_name": "standard English commodity name", "quantity": 1, "unit_hint": null}}
+  ],
+  "dietary_preferences": [strings like "gluten_free", "vegan", "vegetarian", "keto_friendly", "organic", "sugar_free", "lactose_free"],
+  "category_preference": string or null ("Produce", "Dairy & Eggs", "Bakery", "Pantry & Staples", "Beverages & Snacks"),
+  "target_reference": string or null ("first", "second", "third", "both", "it", "that"),
+  "max_price": float or null (e.g. 5.0 for "under $5" or "less than 5 dollars"),
+  "min_price": float or null,
+  "language_detected": "en" | "hi" | "hinglish",
+  "cleaned_search_query": "clean English search or removal term",
+  "is_request_for_new_options": boolean
 }}
 
-Rules:
-1. "action":
-   - "VIEW_MENU": user wants recommendations, browsing, asking what food exists, cravings, or asking for details/more options.
-   - "ADD_TO_CART": user explicitly wants to add/order a specific item or position.
-   - "REMOVE_ITEM": user wants to remove an item from cart.
-   - "CHECKOUT": user wants to finalize, pay, checkout, or complete order ("checkout", "pay now", "order it", "place order", "just order my current item", "no just order my item").
-   - "ASK_ALLERGEN": user asks about allergens, ingredients, or safety.
-   - "COMPARE_ITEMS": user asks to compare two items.
-   - "GENERAL": greetings, small talk, vague questions.
+Conversational Reasoning & STT Acoustic Correction Rules:
+1. "ADD_TO_CART": User wants to add, buy, or restock items.
+   - English: "Add milk", "I need 2 apples", "Put bread and eggs on my list", "Running low on butter", "add both", "add it", "add second one".
+   - Hindi/Hinglish: "2 packet doodh aur bread add karo", "Mujhe paneer chahiye", "Chai patti aur cheeni khatam ho gayi hai".
+   - STT Acoustic Numbers: "add to whole milk" -> quantity: 2, item_name: "whole milk"; "add for apples" -> quantity: 4.
+2. "REMOVE_ITEM": User wants to remove, delete, or cancel an item.
+   - Contextual Removal: If the user says "remove grief from my card", "Reebok ghee", "delete key", or "remove that", match against CURRENT CART CONTEXT and set "cleaned_search_query" to the exact matching cart item name (e.g. "MorningDew Ghee" or "ghee").
+   - Confirmation: If the user says "yes remove", "yes", "remove it", "sure hata do", set action: "REMOVE_ITEM" with target_reference: "it" and "cleaned_search_query" set to the item being confirmed.
+3. "CLEAR_CART": User wants to empty or clear list ("Clear my cart", "Empty list", "Sab saaf kar do", "Cart se sab hata do").
+4. "VIEW_CART": User asks to see their cart ("Show my list", "What is in my cart?", "Show my updated card", "Mera cart dikhao").
+5. "CHECKOUT": User wants to finalize or place order ("Checkout", "Place order", "Order now", "Pay", "place order now").
+6. "VIEW_MENU": Browsing or discovering ("Show organic fruits", "Show vegan snacks and green tea").
+7. "GENERAL": Greetings or general conversation.
 
-2. Fix any typos in "cleaned_search_query".
-3. Set "is_request_for_new_options" to true whenever the user asks for alternative, different, or more options/suggestions ("any more", "other options", "what else", "change it").
+Translation:
+- Translate Hindi/Hinglish food items to standard English (doodh -> milk, chai patti -> tea, cheeni -> sugar, tamatar -> tomato, pyaj -> onion, atta -> flour, chawal -> rice, kela -> banana, seb -> apple).
 
 User Message: "{user_text}"
 
-Return ONLY valid JSON with no markdown block or additional text:
+Return ONLY valid JSON with no extra commentary:
 """
     try:
         response = llm.invoke(prompt)
         text = getattr(response, "content", "").strip()
-        # Clean json backticks if model wrapped in markdown
         if text.startswith("```"):
             text = text.split("\n", 1)[-1].rsplit("\n", 1)[0].strip()
             if text.startswith("json"):
@@ -168,248 +204,131 @@ Return ONLY valid JSON with no markdown block or additional text:
         log_intent_parsed(intent.action, intent.cleaned_search_query or user_text)
         return intent
     except Exception:
-        # Graceful fallback: return default intent
-        intent = ParsedUserIntent(cleaned_search_query=user_text)
-        log_intent_parsed(intent.action, intent.cleaned_search_query or user_text)
+        # Fallback heuristic
+        lowered = user_text.lower()
+        action = "GENERAL"
+        if any(w in lowered for w in ["add", "need", "buy", "put", "chahiye", "dalo", "jodo"]):
+            action = "ADD_TO_CART"
+        elif any(w in lowered for w in ["remove", "delete", "hatao", "cancel"]):
+            action = "REMOVE_ITEM"
+        elif any(w in lowered for w in ["cart", "list", "dikhao", "show"]):
+            action = "VIEW_CART"
+        elif any(w in lowered for w in ["checkout", "order", "place"]):
+            action = "CHECKOUT"
+
+        intent = ParsedUserIntent(
+            action=action,
+            cleaned_search_query=user_text,
+            items=[ItemSpec(item_name=user_text, quantity=1)] if action == "ADD_TO_CART" else []
+        )
         return intent
 
 
-def _is_quota_error(error_str: str) -> bool:
-    """Returns True when the error is a Gemini quota / rate-limit response."""
-    signals = ["429", "RESOURCE_EXHAUSTED", "quota", "rate limit", "rate_limit"]
-    lowered = error_str.lower()
-    return any(s.lower() in lowered for s in signals)
-
-
 # ---------------------------------------------------------------------------
-# Response Generation
+# Conversational AI Shopping Concierge
 # ---------------------------------------------------------------------------
 
 def get_ai_response(llm, user_input, chat_history, context, memory_context=""):
     """
-    Generates a conversational FoodieBot response using the LLM.
-    Cart mutations and order confirmations never reach this function's
-    output — those are handled entirely in session_memory.py / ui_components.py.
+    Generates a natural, helpful shopping concierge response.
+    Never manages raw cart arithmetic — that is handled deterministically in session_memory.py.
     """
     if not llm:
-        return "The language model is not available. Please try again later."
-
-    if _is_inappropriate_or_irrelevant(user_input):
-        return "My apologies, but I can only provide information about our menu items."
+        return "The AI assistant is temporarily unavailable. Please try again in a moment."
 
     history_str = "\n".join(
         [f"{msg['role']}: {msg['content']}" for msg in chat_history]
     )
 
     prompt = f"""
-You are FoodieBot, a warm, polite, and knowledgeable gourmet restaurant concierge. Your tone is welcoming, hospitable, concise, and helpful. Follow these rules:
+You are FoodieBot, an intelligent and friendly Voice Shopping Assistant & Supermarket Concierge.
+Your goal is to help users manage their grocery shopping lists, discover items, and provide smart recipe & pairing suggestions.
 
-- Gracefully handle informal language, minor typos, slang, and multilingual queries by providing clear, hospitable menu guidance.
-- When asked to pick or compare specific options from previous suggestions, directly name the single top matching item and briefly explain why, instead of re-listing multiple items.
-- When asked to describe or elaborate on a specific item (e.g., "tell about this item", "describe this dish"), write a warm 2-3 sentence conversational overview explaining its flavor profile, key ingredients, and appeal, rather than just re-listing raw bullet points.
-- NEVER use internal reasoning phrases like "Based on your request" or "I would recommend".
-- NEVER output any internal scores, numbers, or system metrics in your response.
-- Use bullet points (•) to list items. Show prices as $X.XX, include calories, category, allergens if known.
-- When listing items, use ONE bullet for the item name and price, then indent the details (calories, category, allergens) on the following lines with 4 spaces.
-  Example:
-  • Thai Peanut Crunch Salad – $8.99
-      \tCalories: 450
-      \tCategory: Salads & Healthy Options
-      \tAllergens: Contains: peanuts; soy
-- You do NOT manage the cart. Never say an item was "added", "removed", or that the order was "updated" — cart changes are handled separately and shown to the user directly. If asked what's in the cart, you may reference the SESSION MEMORY `Ordered items` list read-only, but do not claim to modify it.
-- Use the CONTEXT to answer questions. If the user asks if an item is healthy, light, or heavy, use its calorie count and ingredients to respond (e.g., "It has 610 calories and is fried, so it's an indulgent option"). If the user compares items, you may do so.
-- If the user's request is contradictory, missing critical information, or unclear, politely ask ONE clarifying question before attempting to answer.
-- When the user asks for a holistic recommendation based on their preferences, carefully review the SESSION MEMORY and the conversation to identify their stated dietary restrictions, likes, and dislikes, and suggest the single best matching item from the menu.
-- If the user mentions non-food, chemical, or hazardous household substances (e.g., detergent, Harpic, bleach, soap, phenyl, washing powder), politely and firmly explain that chemical cleaning products are toxic and strictly unsafe for consumption, and offer to help them find a safe, delicious menu item instead.
-- If exact parameters (like sugar grams or specific recipe steps) are not in the CONTEXT, answer conversationally using available menu items and categories (e.g., recommend Salads, Unsweetened Beverages, or light options) instead of giving abrupt non-answers.
+Guidelines:
+1. Warm, concise, and helpful tone.
+2. If the user spoke in Hindi or Hinglish, reply politely in clear conversational English or friendly Hinglish.
+3. Use bullet points (•) to display product recommendations with their price ($X.XX) and unit (e.g. 500g, 1L).
+4. Point out relevant dietary badges if applicable (e.g., [Gluten-Free], [Keto-Friendly], [Organic]).
+5. After presenting items, suggest smart complementary pairings (e.g. Bread with Butter/Jam; Pasta with Sauce).
+6. Do NOT hallucinate prices or invent items not present in the CONTEXT.
 
 {memory_context}
 
-CONTEXT:
+CATALOG CONTEXT:
 {context}
 
-CONVERSATION HISTORY:
+CONVERSATION HISTORY (Last 6 turns):
 {history_str}
 
 USER MESSAGE:
 {user_input}
 
-Respond as FoodieBot.
+Respond as FoodieBot:
 """
     try:
         response = llm.invoke(prompt)
-        content = getattr(response, "content", "")
-        if not content or not content.strip():
-            if context and "No relevant items" not in context:
-                return f"Here are a few more delicious options from our menu:\n\n{context}"
-            return "Here are a few more popular options! Let me know if any of these sound good to you."
+        content = getattr(response, "content", "").strip()
+        if not content:
+            return "Here are some popular supermarket items from our catalog! Let me know which ones you'd like to add."
         return _clean_response(content)
     except Exception as e:
-        return f"Sorry, I'm having a technical issue right now: {e}"
+        return f"I encountered a slight technical issue: {e}"
 
 
-# ---------------------------------------------------------------------------
-# Helpers
-# ---------------------------------------------------------------------------
-
-def _is_inappropriate_or_irrelevant(user_input):
-    """
-    Delegates moderation and off-topic handling to the LLM system prompt rules.
-    Only flags non-text/corrupted data inputs.
-    """
-    if len(user_input) > 10:
-        non_ascii_count = sum(1 for c in user_input if ord(c) > 127)
-        if non_ascii_count > len(user_input) * 0.7:
-            return True
-
-    return False
-
-
-def _clean_response(response):
-    """Removes reasoning phrases AND any leaked internal scores/metrics."""
+def _clean_response(response: str) -> str:
+    """Removes reasoning phrases and formats lines cleanly."""
     if not response:
         return ""
     phrases_to_remove = [
         "Based on your requirements",
         "Based on your request",
+        "Looking at our catalog",
         "I would recommend",
-        "I'll exclude",
-        "Looking at the menu",
     ]
-    for phrase in phrases_to_remove:
-        response = response.replace(phrase, "")
-
-    response = re.sub(r'(?i)\b(interest\s*)?score\s*:?\s*\d+\b', '', response)
+    for p in phrases_to_remove:
+        response = response.replace(p, "")
     response = re.sub(r'\n\s*\n\s*\n', '\n\n', response)
-
-    # Ensure single newlines in item detail lines (Calories, Category, Allergens)
-    # end with two spaces so Streamlit Markdown does not collapse them into one line.
-    lines = response.split("\n")
-    cleaned_lines = []
-    for line in lines:
-        stripped = line.rstrip()
-        if any(keyword in stripped for keyword in ["Calories:", "Category:", "Allergens:", "•"]):
-            cleaned_lines.append(stripped + "  ")
-        else:
-            cleaned_lines.append(stripped)
-    return "\n".join(cleaned_lines).strip()
+    return response.strip()
 
 
-# ---------------------------------------------------------------------------
-# Interest scoring — phrase-based (tone) + action-based (resolved outcome)
-# ---------------------------------------------------------------------------
-
-ACTION_SCORE_DELTAS = {
-    "VIEW_MENU": 3,
-    "ASK_ALLERGEN": 4,
-    "COMPARE_ITEMS": 5,
-    "ADD_TO_CART": 15,
-    "REMOVE_ITEM": -8,
-    "CHECKOUT": 20,
-    "GENERAL": 0,
-}
-
-# Negation guard: any of these appearing before/around a "positive" phrase
-# flips it. Word-boundary regex, not naive substring, so "didnt" without an
-# apostrophe still matches (unlike the original " not "/"don't" list, which
-# missed "didnt add it" entirely and let "add it" score +10 as if it were
-# a real order).
-_NEGATION_PATTERN = re.compile(
-    r"\b(not|dont|don't|didnt|didn't|never|no|cancel|remove|without|isn't|isnt|wasn't|wasnt)\b"
-)
+from interest_model import predict_intent
 
 
-def _has_negation(text):
-    return bool(_NEGATION_PATTERN.search(text))
-
-
-def _phrase_based_score(user_input, score):
-    """Tone/sentiment layer.
-
-    Only two explicit override tiers remain — unambiguous hard negations that
-    the ML model might still score as mildly positive. Everything else
-    (affirmatives, mild positives, neutral queries) is delegated to
-    predict_intent so new phrasings are handled automatically.
+def calculate_interest_score(user_input: str, current_score: int, resolved_action=None, search_shown=False) -> int:
     """
-    lowered = user_input.lower()
-
-    # Greetings / Small-talk should never penalize initial score below baseline 50
-    greeting_patterns = [r"\b(hello|hi|hey|hanji|hnji|namaste|good morning|good evening)\b", r"\bwhat'?s happening\b"]
-    if any(re.search(p, lowered) for p in greeting_patterns) and score <= 50:
-        return 50
-
-    # These phrases unambiguously cancel or refuse an action. Keep them as
-    # hard overrides so a fragile model confidence can't flip them.
-    negative_action_phrases = [
-        "do not add", "don't add", "dont add", "didnt add", "didn't add",
-        "do not order", "don't order", "dont order", "cancel that",
-        "cancel my order", "remove that",
-    ]
-    rejection_phrases = [
-        "no thanks", "not interested", "don't want", "dont want", "not now",
-        "maybe later", "leave it", "different item",
-    ]
-
-    if any(phrase in lowered for phrase in negative_action_phrases):
-        return score - 18
-
-    if any(phrase in lowered for phrase in rejection_phrases):
-        return score - 10
-
-    has_negation = _has_negation(lowered)
-    # A contrast word reverses the scope of the negation:
-    # "I don't like spicy but add it anyway" is still a genuine order.
-    has_contrast = bool(re.search(r'\bbut\b|\bhowever\b|\banyway\b|\bstill\b', lowered))
-
-    if has_negation and not has_contrast:
-        return score - 8
-
-    # Delegate everything else — positive orders, affirmatives, neutral queries
-    # — to the trained intent model.
-    try:
-        intent, confidence = predict_intent(user_input)
-        if intent == "positive" and confidence >= 0.5:
-            return score + int(2 + 6 * confidence)
-        elif intent == "negative":
-            return score - int(4 + 8 * confidence)
-        elif intent == "neutral" and score > 50:
-            return score - 1
-    except Exception:
-        pass
-    return score
-
-
-def _action_based_score(resolved_action, score):
-    """Scores the RESOLVED outcome from
-    session_memory.update_state_from_user_message()."""
-    if not resolved_action:
-        return score
-
-    action = resolved_action.get("action", "GENERAL")
-
-    if action in ("ADD_TO_CART", "REMOVE_ITEM", "CHECKOUT") and not resolved_action.get("cart_changed"):
-        return score
-
-    delta = ACTION_SCORE_DELTAS.get(action, 0)
-    return score + delta
-
-
-def calculate_interest_score(user_input, current_score, resolved_action=None, search_shown=False):
-    """
-    Combined score: phrase-based tone signal + action-based outcome signal.
-    Pass `resolved_action` (the dict from update_state_from_user_message())
-    and `search_shown` (True when a relevant search result was returned)
-    through from ui_components.py.
+    Dual-Layer User Engagement & Intent Scoring:
+    Layer 1: ML Model (SentenceTransformer 384-dim Embeddings + Logistic Regression Classifier)
+    Layer 2: Deterministic Action Deltas (ADD_TO_CART, REMOVE_ITEM, CLEAR_CART, CHECKOUT)
     """
     score = current_score
-    score = _phrase_based_score(user_input, score)
-    score = _action_based_score(resolved_action, score)
-    # If relevant items were surfaced but the action stayed GENERAL (e.g.
-    # "i think some spicy" doesn't match any VIEW_MENU keyword), add a
-    # small nudge so genuine menu exploration is reflected in the score.
-    if search_shown and resolved_action and resolved_action.get("action") == "GENERAL":
+    action = resolved_action.get("action", "GENERAL") if isinstance(resolved_action, dict) else "GENERAL"
+
+    # Layer 1: ML Multilingual Sentiment & Tone Prediction
+    try:
+        sentiment, confidence = predict_intent(user_input)
+        if sentiment == "positive":
+            score += int(3 + 5 * confidence)
+        elif sentiment == "negative":
+            score -= int(6 + 8 * confidence)
+        elif sentiment == "neutral" and score > 50:
+            score -= 2
+    except Exception:
+        pass
+
+    # Layer 2: Balanced Action Deltas
+    if action == "ADD_TO_CART":
+        score += 7
+    elif action == "CHECKOUT":
+        score = max(score + 15, 95)
+    elif action == "VIEW_MENU":
         score += 3
-    final_score = max(0, min(100, score))
-    action_name = resolved_action.get("action", "GENERAL") if isinstance(resolved_action, dict) else "GENERAL"
-    log_interest_score(current_score, final_score, action_name)
+    elif action == "REMOVE_ITEM":
+        score -= 12
+    elif action == "CLEAR_CART":
+        score = 30
+    elif search_shown and action == "GENERAL":
+        score += 1
+
+    final_score = max(5, min(100, score))
+    log_interest_score(current_score, final_score, action)
     return final_score
