@@ -1,12 +1,10 @@
 # 🛒 Cartpilot-AI
 ### *Multilingual Agentic Voice Shopping Assistant with Zero-Hallucination Cart Intelligence*
 
-[![CI](https://github.com/harshitttiwari/Cartpilot-AI/actions/workflows/ci.yml/badge.svg)](https://github.com/harshitttiwari/Cartpilot-AI/actions)
 [![Python](https://img.shields.io/badge/Python-3.10%2B-blue.svg?style=flat-square&logo=python)](https://www.python.org/)
 [![Streamlit](https://img.shields.io/badge/Streamlit-1.40%2B-FF4B4B.svg?style=flat-square&logo=streamlit)](https://streamlit.io/)
 [![ChromaDB](https://img.shields.io/badge/ChromaDB-Vector_Search-orange.svg?style=flat-square)](https://www.trychroma.com/)
 [![FastAPI](https://img.shields.io/badge/FastAPI-REST_API-009688.svg?style=flat-square&logo=fastapi)](https://fastapi.tiangolo.com/)
-[![Docker](https://img.shields.io/badge/Docker-Ready-2496ED.svg?style=flat-square&logo=docker)](Dockerfile)
 [![License: MIT](https://img.shields.io/badge/License-MIT-purple.svg?style=flat-square)](LICENSE)
 
 ---
@@ -61,10 +59,12 @@ python -m venv venv
 pip install -r requirements.txt
 ```
 
-### 2. Configure Environment (`.env`)
-```powershell
-cp .env.example .env
-# Edit .env and insert your GEMINI_API_KEY / GROQ_API_KEY
+### 2. Set API Keys (`.env`)
+```env
+GEMINI_API_KEY=your_gemini_key_here
+GEMINI_MODEL=gemini-2.5-flash-lite
+GROQ_API_KEY=your_groq_key_here
+GROQ_MODEL=openai/gpt-oss-120b
 ```
 
 ### 3. Launch App
@@ -73,30 +73,11 @@ streamlit run app.py
 ```
 > Open **`http://localhost:8501`** in Chrome/Edge for microphone support.
 
----
-
-## 🧪 Automated Testing & Docker
-
-#### 🔬 Run Automated Pytest Suite:
-```powershell
-pytest tests/ -v
-```
-
-#### 🐳 Run with Docker (Optional):
-```powershell
-docker build -t cartpilot-ai .
-docker run -p 8501:8501 -p 8000:8000 --env-file .env cartpilot-ai
-```
-
-#### 🔌 Run REST API Backend (FastAPI):
-```powershell
-uvicorn api:app --reload --port 8000
-```
-> Interactive Swagger API Documentation: **`http://localhost:8000/docs`**
+*(Optional REST API: `uvicorn api:app --reload --port 8000` ➡️ Docs at `http://localhost:8000/docs`)*
 
 ---
 
-## 🗣️ 5 Sample Voice Prompts to Try
+## 🧪 5 Sample Voice Prompts to Try
 
 | Goal | Spoken Command | What Happens |
 | :--- | :--- | :--- |
@@ -114,7 +95,6 @@ uvicorn api:app --reload --port 8000
 * **NLP & Orchestration**: LangChain, Pydantic Structured Outputs, Google Gemini + Groq Failover
 * **Search & Vectors**: ChromaDB, SentenceTransformers (`all-MiniLM-L6-v2`), BM25Okapi
 * **Backend API**: FastAPI, Uvicorn, Python 3.11
-* **Testing & CI**: Pytest, GitHub Actions CI
 
 ---
 
