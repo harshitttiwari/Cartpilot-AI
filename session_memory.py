@@ -327,6 +327,11 @@ def resolve_pronoun_reference(text: str) -> Optional[dict]:
     order = st.session_state.session_memory.get("order", {})
     lowered = text.lower()
 
+    # If the user specified an explicit ordinal position ('first', 'second', 'third', 'last'), DO NOT treat as pronoun 'it'
+    for ord_w in ORDINAL_WORDS.keys():
+        if re.search(rf"\b{re.escape(ord_w)}\b", lowered):
+            return None
+
     # Check for 'add both'
     if "both" in lowered and order.get("last_suggested_items"):
         return order["last_suggested_items"]
@@ -461,35 +466,7 @@ def update_state_from_user_message(user_query: str, parsed_intent=None) -> dict:
             "confirmation_override": build_order_confirmation_message(ACTION_CHECKOUT),
         }
 
-    # 1. Check for Pronoun / Smart Suggestion References ('add both', 'add it', 'yes add that')
-    if action in (ACTION_ADD_TO_CART, ACTION_GENERAL):
-        pronoun_match = resolve_pronoun_reference(user_query)
-        if pronoun_match:
-            if isinstance(pronoun_match, list):  # 'add both'
-                added_names = []
-                for p in pronoun_match:
-                    add_item_to_cart(p, quantity=1)
-                    added_names.append(p["name"])
-                order["last_suggested_items"] = []
-                names_str = " and ".join(f"**{n}**" for n in added_names)
-                return {
-                    "action": ACTION_ADD_TO_CART,
-                    "cart_changed": True,
-                    "needs_clarification": False,
-                    "confirmation_override": f"🛒 Added both {names_str} to your shopping list! (Total: **${get_cart_total():.2f}**)",
-                }
-            else:
-                res = add_item_to_cart(pronoun_match, quantity=1)
-                order["last_suggested_items"] = []
-                return {
-                    "action": ACTION_ADD_TO_CART,
-                    "cart_changed": True,
-                    "needs_clarification": False,
-                    "added_info": res,
-                    "confirmation_override": f"🛒 Added **1x {pronoun_match['name']}** ({pronoun_match.get('unit', '')}) to your shopping list! (Subtotal: **${get_cart_total():.2f}**)",
-                }
-
-    # 2. Check for Ordinal References ('add the second one', 'first item', 'at third one')
+    # 1. Check for Ordinal References ('add the second one', 'first item', 'I got it at the first item')
     ord_word, ord_idx, ord_item, total_shown = check_ordinal_intent(user_query)
     if ord_word is not None and (action in (ACTION_ADD_TO_CART, ACTION_GENERAL) or any(w in q_lower for w in ["add", "put", "take", "want", "at", "get", "one", "item"])):
         if ord_item:
@@ -523,6 +500,34 @@ def update_state_from_user_message(user_query: str, parsed_intent=None) -> dict:
                     "cart_changed": False,
                     "needs_clarification": False,
                     "confirmation_override": f"There is no **{ord_word}** item. The previous list only contains **{total_shown} items**.",
+                }
+
+    # 2. Check for Pronoun / Smart Suggestion References ('add both', 'add it', 'yes add that')
+    if action in (ACTION_ADD_TO_CART, ACTION_GENERAL):
+        pronoun_match = resolve_pronoun_reference(user_query)
+        if pronoun_match:
+            if isinstance(pronoun_match, list):  # 'add both'
+                added_names = []
+                for p in pronoun_match:
+                    add_item_to_cart(p, quantity=1)
+                    added_names.append(p["name"])
+                order["last_suggested_items"] = []
+                names_str = " and ".join(f"**{n}**" for n in added_names)
+                return {
+                    "action": ACTION_ADD_TO_CART,
+                    "cart_changed": True,
+                    "needs_clarification": False,
+                    "confirmation_override": f"🛒 Added both {names_str} to your shopping list! (Total: **${get_cart_total():.2f}**)",
+                }
+            else:
+                res = add_item_to_cart(pronoun_match, quantity=1)
+                order["last_suggested_items"] = []
+                return {
+                    "action": ACTION_ADD_TO_CART,
+                    "cart_changed": True,
+                    "needs_clarification": False,
+                    "added_info": res,
+                    "confirmation_override": f"🛒 Added **1x {pronoun_match['name']}** ({pronoun_match.get('unit', '')}) to your shopping list! (Subtotal: **${get_cart_total():.2f}**)",
                 }
 
     # 5. Remove Item Action
