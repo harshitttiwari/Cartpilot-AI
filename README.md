@@ -1,19 +1,17 @@
 # 🛒 Cartpilot-AI
 ### *Multilingual Agentic Voice Shopping Assistant with Zero-Hallucination Cart Intelligence*
 
----
-
-### 🌐 Live Application Demo
-👉 **[Open Live Web App: https://cartpilot-ai.streamlit.app](https://cartpilot-ai.streamlit.app/)**  
-*(Optimized for Chrome & Edge with microphone access enabled)*
-
----
-
 [![Python](https://img.shields.io/badge/Python-3.10%2B-blue.svg?style=flat-square&logo=python)](https://www.python.org/)
 [![Streamlit](https://img.shields.io/badge/Streamlit-1.40%2B-FF4B4B.svg?style=flat-square&logo=streamlit)](https://streamlit.io/)
 [![ChromaDB](https://img.shields.io/badge/ChromaDB-Vector_Search-orange.svg?style=flat-square)](https://www.trychroma.com/)
 [![FastAPI](https://img.shields.io/badge/FastAPI-REST_API-009688.svg?style=flat-square&logo=fastapi)](https://fastapi.tiangolo.com/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-purple.svg?style=flat-square)](LICENSE)
+
+---
+
+### 🌐 Live Application Demo
+👉 **[Open Live Web App: https://cartpilot-ai.streamlit.app](https://cartpilot-ai.streamlit.app/)**  
+*(Optimized for Chrome & Edge with microphone access enabled)*
 
 ---
 
