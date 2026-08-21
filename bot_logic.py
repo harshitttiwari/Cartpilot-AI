@@ -72,7 +72,17 @@ class _DualProviderAdapter:
     def invoke(self, prompt: str) -> SimpleNamespace:
         # 1. Try Gemini models
         if self.gemini_client:
-            for g_model in [self.gemini_model, "gemini-2.5-flash", "gemini-1.5-flash", "gemini-2.0-flash"]:
+            gemini_models = [
+                self.gemini_model,
+                "gemini-2.5-flash-lite",
+                "gemini-2.5-flash",
+                "gemini-1.5-flash",
+                "gemini-2.0-flash",
+            ]
+            seen_gemini = set()
+            ordered_gemini = [m for m in gemini_models if m and not (m in seen_gemini or seen_gemini.add(m))]
+
+            for g_model in ordered_gemini:
                 try:
                     response = self.gemini_client.models.generate_content(
                         model=g_model,
@@ -89,7 +99,18 @@ class _DualProviderAdapter:
 
         # 2. Try Groq fast fallback models
         if self.groq_client:
-            for q_model in ["openai/gpt-oss-120b", "openai/gpt-oss-20b", "qwen/qwen3.6-27b", "groq/compound-mini"]:
+            groq_models = [
+                self.groq_model,
+                "llama-3.3-70b-versatile",
+                "llama-3.1-8b-instant",
+                "mixtral-8x7b-32768",
+                "openai/gpt-oss-120b",
+            ]
+            # Deduplicate while preserving priority order
+            seen_groq = set()
+            ordered_groq = [m for m in groq_models if m and not (m in seen_groq or seen_groq.add(m))]
+
+            for q_model in ordered_groq:
                 try:
                     completion = self.groq_client.chat.completions.create(
                         model=q_model,
@@ -97,7 +118,7 @@ class _DualProviderAdapter:
                         temperature=0.2,
                         max_tokens=1024,
                     )
-                    log_llm_provider("Groq OSS", q_model)
+                    log_llm_provider("Groq Fallback", q_model)
                     text = completion.choices[0].message.content or ""
                     if text:
                         return SimpleNamespace(content=text)
