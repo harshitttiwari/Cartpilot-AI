@@ -140,77 +140,92 @@ def render_voice_controller():
                 if ('SpeechRecognition' in window || 'webkitSpeechRecognition' in window) {{
                     const SpeechRecognitionClass = window.SpeechRecognition || window.webkitSpeechRecognition;
                     recognition = new SpeechRecognitionClass();
-                    recognition.continuous = false;
+                    recognition.continuous = true;
                     recognition.interimResults = true;
                     recognition.lang = langCode;
 
+                    let silenceTimer = null;
+                    let lastRecognizedText = '';
+
+                    function submitTranscript(text) {{
+                        if (!text || text.trim().length === 0) return;
+                        const transcript = text.trim();
+                        document.getElementById('statusLabel').innerHTML = '<span style="color:#00e676;font-weight:600;">✅ "' + transcript + '"</span>';
+                        resetMicUI();
+
+                        try {{
+                            const parentDoc = window.parent.document;
+                            const chatTextarea = parentDoc.querySelector('textarea[data-testid="stChatInputTextArea"]');
+                            if (chatTextarea) {{
+                                const nativeSetter = Object.getOwnPropertyDescriptor(window.parent.HTMLTextAreaElement.prototype, "value")?.set || 
+                                                     Object.getOwnPropertyDescriptor(window.HTMLTextAreaElement.prototype, "value")?.set;
+                                
+                                if (nativeSetter) {{
+                                    nativeSetter.call(chatTextarea, transcript);
+                                }} else {{
+                                    chatTextarea.value = transcript;
+                                }}
+                                
+                                chatTextarea.dispatchEvent(new Event('input', {{ bubbles: true }}));
+                                chatTextarea.dispatchEvent(new Event('change', {{ bubbles: true }}));
+                                
+                                setTimeout(() => {{
+                                    const sendBtn = parentDoc.querySelector('button[data-testid="stChatInputSubmitButton"]');
+                                    if (sendBtn) {{
+                                        sendBtn.removeAttribute('disabled');
+                                        sendBtn.click();
+                                    }}
+                                    chatTextarea.dispatchEvent(new KeyboardEvent('keydown', {{
+                                        key: 'Enter',
+                                        code: 'Enter',
+                                        keyCode: 13,
+                                        which: 13,
+                                        bubbles: true,
+                                        cancelable: true
+                                    }}));
+                                }}, 200);
+                            }}
+                        }} catch (err) {{
+                            console.log("Auto-submit error:", err);
+                        }}
+                    }}
+
                     recognition.onstart = function() {{
                         isListening = true;
+                        lastRecognizedText = '';
                         document.getElementById('micBtn').classList.add('listening');
                         document.getElementById('btnText').innerText = 'Listening...';
                         document.getElementById('recDot').style.display = 'inline-block';
-                        document.getElementById('statusLabel').innerHTML = '<span style="color:#00e676;">🎙️ Speak your grocery command...</span>';
+                        document.getElementById('statusLabel').innerHTML = '<span style="color:#00e676;">🎙️ Listening live... speak now</span>';
                     }};
 
                     recognition.onresult = function(event) {{
-                        let interimTranscript = '';
-                        let finalTranscript = '';
+                        let interimText = '';
+                        let finalText = '';
 
-                        for (let i = event.resultIndex; i < event.results.length; ++i) {{
+                        for (let i = 0; i < event.results.length; ++i) {{
                             if (event.results[i].isFinal) {{
-                                finalTranscript += event.results[i][0].transcript;
+                                finalText += event.results[i][0].transcript + ' ';
                             }} else {{
-                                interimTranscript += event.results[i][0].transcript;
+                                interimText += event.results[i][0].transcript;
                             }}
                         }}
 
-                        // Real-time live word streaming in UI
-                        if (interimTranscript) {{
-                            document.getElementById('statusLabel').innerHTML = '<span style="color:#90caf9;font-weight:500;">🎙️ ' + interimTranscript + ' <span style="opacity:0.7;animation:blink 0.8s infinite;">▍</span></span>';
+                        const liveText = (finalText + interimText).trim();
+                        if (liveText.length > 0) {{
+                            lastRecognizedText = liveText;
+                            document.getElementById('statusLabel').innerHTML = '<span style="color:#90caf9;font-weight:600;">🎙️ ' + liveText + ' <span style="animation:blink 0.7s infinite;opacity:0.8;">▍</span></span>';
                         }}
 
-                        // Final speech recognized -> dispatch to chatbot
-                        if (finalTranscript && finalTranscript.trim().length > 0) {{
-                            const transcript = finalTranscript.trim();
-                            document.getElementById('statusLabel').innerHTML = '<span style="color:#00e676;font-weight:600;">✅ "' + transcript + '"</span>';
-                            
-                            try {{
-                                const parentDoc = window.parent.document;
-                                const chatTextarea = parentDoc.querySelector('textarea[data-testid="stChatInputTextArea"]');
-                                if (chatTextarea) {{
-                                    const nativeSetter = Object.getOwnPropertyDescriptor(window.parent.HTMLTextAreaElement.prototype, "value")?.set || 
-                                                         Object.getOwnPropertyDescriptor(window.HTMLTextAreaElement.prototype, "value")?.set;
-                                    
-                                    if (nativeSetter) {{
-                                        nativeSetter.call(chatTextarea, transcript);
-                                    }} else {{
-                                        chatTextarea.value = transcript;
-                                    }}
-                                    
-                                    chatTextarea.dispatchEvent(new Event('input', {{ bubbles: true }}));
-                                    chatTextarea.dispatchEvent(new Event('change', {{ bubbles: true }}));
-                                    
-                                    // Trigger send
-                                    setTimeout(() => {{
-                                        const sendBtn = parentDoc.querySelector('button[data-testid="stChatInputSubmitButton"]');
-                                        if (sendBtn) {{
-                                            sendBtn.removeAttribute('disabled');
-                                            sendBtn.click();
-                                        }}
-                                        chatTextarea.dispatchEvent(new KeyboardEvent('keydown', {{
-                                            key: 'Enter',
-                                            code: 'Enter',
-                                            keyCode: 13,
-                                            which: 13,
-                                            bubbles: true,
-                                            cancelable: true
-                                        }}));
-                                    }}, 250);
-                                }}
-                            }} catch (err) {{
-                                console.log("Could not auto-submit to chat input:", err);
+                        // Silence Debounce: If user stops speaking for 1.1 seconds, auto-finalize & submit
+                        clearTimeout(silenceTimer);
+                        silenceTimer = setTimeout(function() {{
+                            if (isListening && lastRecognizedText.length > 0) {{
+                                isListening = false;
+                                try {{ recognition.stop(); }} catch(e) {{}}
+                                submitTranscript(lastRecognizedText);
                             }}
-                        }}
+                        }}, 1100);
                     }};
 
                     recognition.onerror = function(event) {{
@@ -227,7 +242,11 @@ def render_voice_controller():
 
                     recognition.onend = function() {{
                         isListening = false;
-                        resetMicUI();
+                        if (lastRecognizedText.length > 0) {{
+                            submitTranscript(lastRecognizedText);
+                        }} else {{
+                            resetMicUI();
+                        }}
                     }};
                 }} else {{
                     document.getElementById('statusLabel').innerText = '⚠️ Speech Recognition API not supported in this browser. Please use Chrome/Edge.';
@@ -242,7 +261,14 @@ def render_voice_controller():
                 function handleMicClick() {{
                     if (!recognition) return;
                     if (isListening) {{
-                        recognition.stop();
+                        isListening = false;
+                        clearTimeout(silenceTimer);
+                        try {{ recognition.stop(); }} catch(e) {{}}
+                        if (lastRecognizedText.length > 0) {{
+                            submitTranscript(lastRecognizedText);
+                        }} else {{
+                            resetMicUI();
+                        }}
                     }} else {{
                         recognition.lang = '{lang_code}';
                         try {{
