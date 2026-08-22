@@ -141,7 +141,7 @@ def render_voice_controller():
                     const SpeechRecognitionClass = window.SpeechRecognition || window.webkitSpeechRecognition;
                     recognition = new SpeechRecognitionClass();
                     recognition.continuous = false;
-                    recognition.interimResults = false;
+                    recognition.interimResults = true;
                     recognition.lang = langCode;
 
                     recognition.onstart = function() {{
@@ -149,49 +149,67 @@ def render_voice_controller():
                         document.getElementById('micBtn').classList.add('listening');
                         document.getElementById('btnText').innerText = 'Listening...';
                         document.getElementById('recDot').style.display = 'inline-block';
-                        document.getElementById('statusLabel').innerText = 'Listening in {lang_label}...';
+                        document.getElementById('statusLabel').innerHTML = '<span style="color:#00e676;">🎙️ Speak your grocery command...</span>';
                     }};
 
                     recognition.onresult = function(event) {{
-                        const transcript = event.results[0][0].transcript.trim();
-                        document.getElementById('statusLabel').innerText = 'Captured: "' + transcript + '"';
-                        
-                        // Automatically inject transcript into Streamlit's Chat Input textarea
-                        try {{
-                            const parentDoc = window.parent.document;
-                            const chatTextarea = parentDoc.querySelector('textarea[data-testid="stChatInputTextArea"]');
-                            if (chatTextarea) {{
-                                const nativeSetter = Object.getOwnPropertyDescriptor(window.parent.HTMLTextAreaElement.prototype, "value")?.set || 
-                                                     Object.getOwnPropertyDescriptor(window.HTMLTextAreaElement.prototype, "value")?.set;
-                                
-                                if (nativeSetter) {{
-                                    nativeSetter.call(chatTextarea, transcript);
-                                }} else {{
-                                    chatTextarea.value = transcript;
-                                }}
-                                
-                                chatTextarea.dispatchEvent(new Event('input', {{ bubbles: true }}));
-                                chatTextarea.dispatchEvent(new Event('change', {{ bubbles: true }}));
-                                
-                                // Auto-trigger submission
-                                setTimeout(() => {{
-                                    const sendBtn = parentDoc.querySelector('button[data-testid="stChatInputSubmitButton"]');
-                                    if (sendBtn) {{
-                                        sendBtn.removeAttribute('disabled');
-                                        sendBtn.click();
-                                    }}
-                                    chatTextarea.dispatchEvent(new KeyboardEvent('keydown', {{
-                                        key: 'Enter',
-                                        code: 'Enter',
-                                        keyCode: 13,
-                                        which: 13,
-                                        bubbles: true,
-                                        cancelable: true
-                                    }}));
-                                }}, 350);
+                        let interimTranscript = '';
+                        let finalTranscript = '';
+
+                        for (let i = event.resultIndex; i < event.results.length; ++i) {{
+                            if (event.results[i].isFinal) {{
+                                finalTranscript += event.results[i][0].transcript;
+                            }} else {{
+                                interimTranscript += event.results[i][0].transcript;
                             }}
-                        }} catch (err) {{
-                            console.log("Could not auto-submit to chat input:", err);
+                        }}
+
+                        // Real-time live word streaming in UI
+                        if (interimTranscript) {{
+                            document.getElementById('statusLabel').innerHTML = '<span style="color:#90caf9;font-weight:500;">🎙️ ' + interimTranscript + ' <span style="opacity:0.7;animation:blink 0.8s infinite;">▍</span></span>';
+                        }}
+
+                        // Final speech recognized -> dispatch to chatbot
+                        if (finalTranscript && finalTranscript.trim().length > 0) {{
+                            const transcript = finalTranscript.trim();
+                            document.getElementById('statusLabel').innerHTML = '<span style="color:#00e676;font-weight:600;">✅ "' + transcript + '"</span>';
+                            
+                            try {{
+                                const parentDoc = window.parent.document;
+                                const chatTextarea = parentDoc.querySelector('textarea[data-testid="stChatInputTextArea"]');
+                                if (chatTextarea) {{
+                                    const nativeSetter = Object.getOwnPropertyDescriptor(window.parent.HTMLTextAreaElement.prototype, "value")?.set || 
+                                                         Object.getOwnPropertyDescriptor(window.HTMLTextAreaElement.prototype, "value")?.set;
+                                    
+                                    if (nativeSetter) {{
+                                        nativeSetter.call(chatTextarea, transcript);
+                                    }} else {{
+                                        chatTextarea.value = transcript;
+                                    }}
+                                    
+                                    chatTextarea.dispatchEvent(new Event('input', {{ bubbles: true }}));
+                                    chatTextarea.dispatchEvent(new Event('change', {{ bubbles: true }}));
+                                    
+                                    // Trigger send
+                                    setTimeout(() => {{
+                                        const sendBtn = parentDoc.querySelector('button[data-testid="stChatInputSubmitButton"]');
+                                        if (sendBtn) {{
+                                            sendBtn.removeAttribute('disabled');
+                                            sendBtn.click();
+                                        }}
+                                        chatTextarea.dispatchEvent(new KeyboardEvent('keydown', {{
+                                            key: 'Enter',
+                                            code: 'Enter',
+                                            keyCode: 13,
+                                            which: 13,
+                                            bubbles: true,
+                                            cancelable: true
+                                        }}));
+                                    }}, 250);
+                                }}
+                            }} catch (err) {{
+                                console.log("Could not auto-submit to chat input:", err);
+                            }}
                         }}
                     }};
 
