@@ -135,24 +135,27 @@ def render_voice_controller():
             <script>
                 let recognition = null;
                 let isListening = false;
-                const langCode = "{lang_code}";
-
                 if ('SpeechRecognition' in window || 'webkitSpeechRecognition' in window) {{
                     const SpeechRecognitionClass = window.SpeechRecognition || window.webkitSpeechRecognition;
                     recognition = new SpeechRecognitionClass();
-                    recognition.continuous = true;
-                    recognition.interimResults = true;
-                    recognition.lang = langCode;
+                    recognition.continuous = false;
+                    recognition.interimResults = false;
+                    recognition.lang = '{lang_code}';
 
-                    let silenceTimer = null;
-                    let lastRecognizedText = '';
+                    recognition.onstart = function() {{
+                        isListening = true;
+                        document.getElementById('micBtn').classList.add('listening');
+                        document.getElementById('btnText').innerText = 'Listening...';
+                        document.getElementById('recDot').style.display = 'inline-block';
+                        document.getElementById('statusLabel').innerText = 'Listening in {lang_label}...';
+                    }};
 
-                    function submitTranscript(text) {{
-                        if (!text || text.trim().length === 0) return;
-                        const transcript = text.trim();
-                        document.getElementById('statusLabel').innerHTML = '<span style="color:#00e676;font-weight:600;">✅ "' + transcript + '"</span>';
+                    recognition.onresult = function(event) {{
+                        const transcript = event.results[0][0].transcript.trim();
+                        document.getElementById('statusLabel').innerText = 'Captured: "' + transcript + '"';
                         resetMicUI();
-
+                        
+                        // Inject transcript into Streamlit's Chat Input textarea and submit
                         try {{
                             const parentDoc = window.parent.document;
                             const chatTextarea = parentDoc.querySelector('textarea[data-testid="stChatInputTextArea"]');
@@ -183,70 +186,22 @@ def render_voice_controller():
                                         bubbles: true,
                                         cancelable: true
                                     }}));
-                                }}, 200);
+                                }}, 300);
                             }}
                         }} catch (err) {{
-                            console.log("Auto-submit error:", err);
+                            console.log("Could not auto-submit to chat input:", err);
                         }}
-                    }}
-
-                    recognition.onstart = function() {{
-                        isListening = true;
-                        lastRecognizedText = '';
-                        document.getElementById('micBtn').classList.add('listening');
-                        document.getElementById('btnText').innerText = 'Listening...';
-                        document.getElementById('recDot').style.display = 'inline-block';
-                        document.getElementById('statusLabel').innerHTML = '<span style="color:#00e676;">🎙️ Listening live... speak now</span>';
-                    }};
-
-                    recognition.onresult = function(event) {{
-                        let interimText = '';
-                        let finalText = '';
-
-                        for (let i = 0; i < event.results.length; ++i) {{
-                            if (event.results[i].isFinal) {{
-                                finalText += event.results[i][0].transcript + ' ';
-                            }} else {{
-                                interimText += event.results[i][0].transcript;
-                            }}
-                        }}
-
-                        const liveText = (finalText + interimText).trim();
-                        if (liveText.length > 0) {{
-                            lastRecognizedText = liveText;
-                            document.getElementById('statusLabel').innerHTML = '<span style="color:#90caf9;font-weight:600;">🎙️ ' + liveText + ' <span style="animation:blink 0.7s infinite;opacity:0.8;">▍</span></span>';
-                        }}
-
-                        // Silence Debounce: If user stops speaking for 1.1 seconds, auto-finalize & submit
-                        clearTimeout(silenceTimer);
-                        silenceTimer = setTimeout(function() {{
-                            if (isListening && lastRecognizedText.length > 0) {{
-                                isListening = false;
-                                try {{ recognition.stop(); }} catch(e) {{}}
-                                submitTranscript(lastRecognizedText);
-                            }}
-                        }}, 1100);
                     }};
 
                     recognition.onerror = function(event) {{
                         isListening = false;
                         resetMicUI();
-                        if (event.error === 'not-allowed') {{
-                            document.getElementById('statusLabel').innerText = '❌ Microphone access denied. Allow mic permissions in browser.';
-                        }} else if (event.error === 'no-speech') {{
-                            document.getElementById('statusLabel').innerText = '⚠️ No speech detected. Please try again.';
-                        }} else {{
-                            document.getElementById('statusLabel').innerText = '⚠️ Voice error: ' + event.error;
-                        }}
+                        document.getElementById('statusLabel').innerText = '⚠️ Error: ' + event.error;
                     }};
 
                     recognition.onend = function() {{
                         isListening = false;
-                        if (lastRecognizedText.length > 0) {{
-                            submitTranscript(lastRecognizedText);
-                        }} else {{
-                            resetMicUI();
-                        }}
+                        resetMicUI();
                     }};
                 }} else {{
                     document.getElementById('statusLabel').innerText = '⚠️ Speech Recognition API not supported in this browser. Please use Chrome/Edge.';
@@ -261,14 +216,7 @@ def render_voice_controller():
                 function handleMicClick() {{
                     if (!recognition) return;
                     if (isListening) {{
-                        isListening = false;
-                        clearTimeout(silenceTimer);
-                        try {{ recognition.stop(); }} catch(e) {{}}
-                        if (lastRecognizedText.length > 0) {{
-                            submitTranscript(lastRecognizedText);
-                        }} else {{
-                            resetMicUI();
-                        }}
+                        recognition.stop();
                     }} else {{
                         recognition.lang = '{lang_code}';
                         try {{
