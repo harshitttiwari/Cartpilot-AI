@@ -54,6 +54,33 @@ flowchart LR
 
 ---
 
+## 📁 Repository Structure
+
+```text
+Cartpilot-AI/
+├── app.py                      # Main Streamlit Web Application entry point
+├── run_app.py                  # Dual-Server Launcher (FastAPI + Streamlit)
+├── requirements.txt            # Project dependencies
+├── .env / .env.example         # Environment variables
+├── data/
+│   └── grocery_shopping_catalog3.csv  # 1,100+ Item Grocery Dataset
+└── src/
+    ├── api/                    # FastAPI REST API Service (api.py)
+    ├── core/                   # NLP Intent Parser, Session State & Telemetry
+    │   ├── bot_logic.py
+    │   ├── session_memory.py
+    │   ├── interest_model.py
+    │   └── log.py
+    ├── database/               # ChromaDB & BM25 Vector Search Pipeline
+    │   ├── data_pipeline.py
+    │   └── database.py
+    └── ui/                     # Streamlit Frontend & Voice Components
+        ├── ui_components.py
+        └── voice_component.py
+```
+
+---
+
 ## 🚀 Quickstart (Run in 3 Steps)
 
 ### 1. Clone & Install
@@ -70,7 +97,7 @@ pip install -r requirements.txt
 GEMINI_API_KEY=your_gemini_key_here
 GEMINI_MODEL=gemini-2.5-flash-lite
 GROQ_API_KEY=your_groq_key_here
-GROQ_MODEL=openai/gpt-oss-120b
+GROQ_MODEL=llama-3.3-70b-versatile
 ```
 
 ### 3. Launch App
@@ -79,7 +106,7 @@ streamlit run app.py
 ```
 > Open **`http://localhost:8501`** in Chrome/Edge for microphone support.
 
-*(Optional REST API: `uvicorn api:app --reload --port 8000` ➡️ Docs at `http://localhost:8000/docs`)*
+*(Optional Dual-Server: `python run_app.py` or FastAPI standalone: `uvicorn src.api.api:app --reload --port 8000` ➡️ Docs at `http://localhost:8000/docs`)*
 
 ---
 
@@ -90,7 +117,7 @@ streamlit run app.py
 | **Multi-Item Add** | *"Add 2 milk, 1 bread, and eggs to my list"* | Adds 3 items, computes exact subtotal, and triggers cross-aisle suggestions. |
 | **Hindi Recipe Intent** | *"Mujhe paneer butter masala ke liye paneer aur tamatar chahiye"* | Normalizes Hindi items and sorts into Dairy & Produce aisles. |
 | **Smart Suggestion** | *"Add both"* | Adds the recommended pairing items in 1 step. |
-| **Price Filtered Search** | *"Find organic fruits under $6"* | Hybrid search filters by `[organic]` tag and price $\le \$6.00$. |
+| **Price Filtered Search** | *"Find organic dairy items under $10"* | Hybrid search filters by `[organic]` tag and price $\le \$10.00$. |
 | **Instant Checkout** | *"Add 1 butter and checkout"* | Adds butter and finalizes order with delivery confirmation. |
 
 ---
@@ -98,7 +125,7 @@ streamlit run app.py
 ## 🛠️ Tech Stack
 
 * **Frontend**: Streamlit, Web Speech API (HTML5 Audio), Vanilla CSS Glassmorphism
-* **NLP & Orchestration**: LangChain, Pydantic Structured Outputs, Google Gemini + Groq Failover
+* **NLP & Orchestration**: Pydantic Structured Outputs, Google Gemini + Groq Failover
 * **Search & Vectors**: ChromaDB, SentenceTransformers (`all-MiniLM-L6-v2`), BM25Okapi
 * **Backend API**: FastAPI, Uvicorn, Python 3.11
 
