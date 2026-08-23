@@ -1,5 +1,6 @@
 # ui_components.py
 import re
+import pandas as pd
 import streamlit as st
 import time
 from datetime import datetime
@@ -348,59 +349,122 @@ def _hybrid_search(prompt, top_k=10, parsed_intent=None):
 
 # ----------------- Analytics & Live Shopping Cart Sidebar -----------------
 
+def _render_sparkline_svg(history: list) -> str:
+    """Generates a sleek, ultra-compact inline SVG sparkline."""
+    if len(history) < 2:
+        return ""
+    recent = history[-15:]
+    min_v, max_v = min(recent), max(recent)
+    v_range = (max_v - min_v) if max_v > min_v else 1
+    width, height = 240, 30
+    points = []
+    for i, val in enumerate(recent):
+        x = int(i * (width / max(1, len(recent) - 1)))
+        y = int(height - ((val - min_v) / v_range) * (height - 6) - 3)
+        points.append(f"{x},{y}")
+    pts_str = " ".join(points)
+    return f"""
+    <div style="margin-top:6px; background:rgba(255,255,255,0.02); border-radius:6px; padding:4px 8px;">
+        <div style="display:flex; justify-content:space-between; font-size:0.7rem; color:#8E8EA0; margin-bottom:2px;">
+            <span>Trend</span><span>{recent[-1]}%</span>
+        </div>
+        <svg viewBox="0 0 {width} {height}" style="width:100%; height:26px; overflow:visible;">
+            <polyline fill="none" stroke="#FF4B4B" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" points="{pts_str}" />
+        </svg>
+    </div>
+    """
+
+
 def render_analytics_sidebar(container):
     initialize_session_memory()
     total = get_cart_total()
     total_count = get_cart_items_count()
     aisles = get_cart_by_aisles()
 
-    # 1. Live Query & Engagement (Placed at Upper Position)
-    st.markdown("#### 📈 Live Query & Engagement")
+    # 1. Compact Live Telemetry & Engagement
+    st.markdown(
+        """
+        <div style="font-size:0.85rem; font-weight:700; color:#E0E0E0; margin-bottom:4px; display:flex; align-items:center; gap:6px;">
+            ⚡ <span>Live Telemetry & Engagement</span>
+        </div>
+        """,
+        unsafe_allow_html=True
+    )
     with st.container(border=True):
         if st.session_state.query_log:
             latest = st.session_state.query_log[-1]
-            st.write(f"**Query:** {latest['user_query']}")
-            c_act, c_lat = st.columns(2)
-            with c_act:
-                st.caption(f"Action: `{latest.get('action', 'N/A')}`")
-            with c_lat:
-                st.caption(f"Latency: `{latest['duration_ms']} ms`")
-            st.divider()
+            q_text = latest['user_query']
+            act = latest.get('action', 'N/A')
+            lat = latest.get('duration_ms', 0)
+            st.markdown(
+                f"""
+                <div style="font-size:0.8rem; margin-bottom:6px; line-height:1.3;">
+                    <div style="color:#FAFAFA; font-weight:600; word-break:break-word;">
+                        💬 <i>"{q_text}"</i>
+                    </div>
+                    <div style="display:flex; gap:6px; margin-top:4px;">
+                        <span style="background:rgba(255,75,75,0.15); color:#FF6B6B; font-size:0.68rem; padding:1px 6px; border-radius:4px; font-weight:600;">{act}</span>
+                        <span style="background:rgba(255,255,255,0.06); color:#A0A0A0; font-size:0.68rem; padding:1px 6px; border-radius:4px;">⏱️ {lat}ms</span>
+                    </div>
+                </div>
+                """,
+                unsafe_allow_html=True
+            )
 
         score = st.session_state.interest_score
-        st.markdown(f"**Engagement Level:** `{score}%`")
+        st.markdown(
+            f"""
+            <div style="display:flex; justify-content:space-between; align-items:center; font-size:0.78rem; font-weight:600; color:#CCCCCC; margin-bottom:3px;">
+                <span>Engagement</span>
+                <span style="color:#00E676; font-weight:700;">{score}%</span>
+            </div>
+            """,
+            unsafe_allow_html=True
+        )
         st.progress(max(0.0, min(1.0, score / 100.0)))
+        
+        # Render ultra-slim sparkline trend
         if len(st.session_state.interest_history) > 1:
-            st.line_chart(st.session_state.interest_history, height=65)
+            st.markdown(_render_sparkline_svg(st.session_state.interest_history), unsafe_allow_html=True)
 
-    st.markdown("---")
-
-    # 2. Live Shopping Cart (Placed Below Engagement)
-    st.markdown("#### 🛒 Live Shopping Cart")
+    # 2. Compact Live Shopping Cart
+    st.markdown(
+        f"""
+        <div style="font-size:0.85rem; font-weight:700; color:#E0E0E0; margin-top:8px; margin-bottom:4px; display:flex; justify-content:space-between; align-items:center;">
+            <span>🛒 Live Cart</span>
+            <span style="font-size:0.75rem; color:#00E676; background:rgba(0,230,118,0.12); padding:1px 8px; border-radius:10px;">{total_count} items • ${total:.2f}</span>
+        </div>
+        """,
+        unsafe_allow_html=True
+    )
+    
     if total_count == 0:
-        st.info("Your shopping list is empty. Speak or type to add items!")
+        st.caption("Your cart is empty. Speak or type to add items!")
     else:
         with st.container(border=True):
-            st.markdown(f"**Items:** `{total_count}` | **Total:** `\\${total:.2f}`")
-            
             for aisle, items in aisles.items():
-                st.caption(f"📍 **{aisle}**")
+                st.markdown(f"<div style='font-size:0.72rem; font-weight:700; color:#FF9800; margin-top:4px; margin-bottom:2px;'>📍 {aisle.upper()}</div>", unsafe_allow_html=True)
                 for it in items:
-                    c1, c2 = st.columns([3, 1])
-                    with c1:
-                        st.write(f"• **{it['quantity']}x {it['name']}** ({it['unit']})")
-                    with c2:
-                        st.write(f"\\${it['subtotal']:.2f}")
+                    st.markdown(
+                        f"""
+                        <div style="display:flex; justify-content:space-between; align-items:flex-start; font-size:0.78rem; padding:3px 0; color:#EEEEEE; gap:8px;">
+                            <div style="line-height:1.25;">• <b>{it['quantity']}x</b> {it['name']} <span style="color:#888; font-size:0.7rem;">({it['unit']})</span></div>
+                            <div style="font-weight:600; color:#FAFAFA; white-space:nowrap;">${it['subtotal']:.2f}</div>
+                        </div>
+                        """,
+                        unsafe_allow_html=True
+                    )
 
+            st.markdown("<div style='margin-top:6px;'></div>", unsafe_allow_html=True)
             bcol1, bcol2 = st.columns(2)
             with bcol1:
-                if st.button("🧹 Clear", width="stretch"):
+                if st.button("🧹 Clear", width="stretch", key="sb_clear_cart_btn"):
                     clear_cart()
                     st.rerun()
             with bcol2:
-                if st.button("🎉 Checkout", type="primary", width="stretch"):
+                if st.button("🎉 Checkout", type="primary", width="stretch", key="sb_checkout_cart_btn"):
                     st.balloons()
-                    st.success(f"Order Placed! Total: \\${total:.2f}")
+                    st.success(f"Total: ${total:.2f}")
 
 
 def render_admin_panel():

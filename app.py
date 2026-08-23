@@ -79,24 +79,34 @@ st.markdown(
         }
 
         /* ── Hide Streamlit chrome ── */
-        #MainMenu, footer, .stDeployButton, [data-testid="stAppDeployButton"] {
+        #MainMenu, footer, .stDeployButton, [data-testid="stAppDeployButton"], [data-testid="stDecoration"] {
             display: none !important;
         }
         header[data-testid="stHeader"] {
-            display: none !important;
-            height: 0px !important;
+            background: transparent !important;
+            height: 2.5rem !important;
+            z-index: 99 !important;
         }
 
-        /* ── Sidebar reopen always visible ── */
-        [data-testid="stSidebarCollapsedControl"] {
+        /* ── Sidebar reopen always visible at top-left ── */
+        [data-testid="stSidebarCollapsedControl"],
+        button[aria-label="Open sidebar"],
+        [data-testid="stSidebarCollapseButton"] {
+            display: inline-flex !important;
             opacity: 1 !important;
+            visibility: visible !important;
+            z-index: 100 !important;
         }
 
-        /* ── Sidebar collapse fix (Streamlit 1.60) ── */
+        /* ── Sidebar collapse & scrolling ── */
         section[data-testid="stSidebar"][aria-expanded="false"] {
             width: 0px !important;
             min-width: 0px !important;
             overflow: hidden !important;
+        }
+        section[data-testid="stSidebar"] div[data-testid="stSidebarUserContent"] {
+            overflow-y: auto !important;
+            padding-bottom: 2rem !important;
         }
 
         /* ═══════════════════════════════════════════ */
