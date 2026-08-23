@@ -22,14 +22,14 @@ class MockSessionState(dict):
 if not hasattr(st, "session_state") or not isinstance(st.session_state, MockSessionState):
     st.session_state = MockSessionState()
 
-from database import initialize_services
-from bot_logic import (
+from src.database.database import initialize_services
+from src.core.bot_logic import (
     initialize_llm,
     parse_intent_with_llm,
     get_ai_response,
     calculate_interest_score,
 )
-from session_memory import (
+from src.core.session_memory import (
     initialize_session_memory,
     update_state_from_user_message,
     build_memory_context,
@@ -39,7 +39,7 @@ from session_memory import (
     get_cart_total,
     get_cart_items_count,
 )
-from ui_components import _hybrid_search, _build_enhanced_context, CART_MUTATING_ACTIONS
+from src.ui.ui_components import _hybrid_search, _build_enhanced_context, CART_MUTATING_ACTIONS
 
 
 @asynccontextmanager

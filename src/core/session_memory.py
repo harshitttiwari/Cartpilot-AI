@@ -2,8 +2,8 @@
 import re
 import streamlit as st
 from typing import Dict, List, Optional
-from data_pipeline import get_recommendation_graph
-from log import log_cart_action
+from src.database.data_pipeline import get_recommendation_graph
+from src.core.log import log_cart_action
 
 # Hybrid Memory Configuration:
 # - Sliding Buffer Window (K = 6 turns)
@@ -67,31 +67,6 @@ def record_turn(role: str, content: str):
     # Enforce Buffer Window Size K = 6
     if len(mem["recent_turns"]) > BUFFER_WINDOW_SIZE:
         mem["recent_turns"] = mem["recent_turns"][-BUFFER_WINDOW_SIZE:]
-
-
-def register_shown_items(items: List[dict]):
-    """
-    Stores an ordered snapshot of search results for positional voice commands ('add the 2nd one').
-    """
-    initialize_session_memory()
-    order = st.session_state.session_memory["order"]
-
-    snapshot = []
-    for idx, item in enumerate(items[:4], start=1):
-        snapshot.append({
-            "index": idx,
-            "product_id": str(item.get("product_id")),
-            "name": str(item.get("name", "")),
-            "category": str(item.get("category", "General")),
-            "unit": str(item.get("unit", "")),
-            "price": float(item.get("price", 0.0)),
-            "dietary_tags": str(item.get("dietary_tags", "")),
-            "description": str(item.get("description", "")),
-        })
-
-    order["last_recommendations"] = snapshot
-    if snapshot:
-        order["last_recommended_item"] = snapshot[0]
 
 
 def add_item_to_cart(item_dict: dict, quantity: int = 1) -> dict:
@@ -212,11 +187,8 @@ def remove_item_from_cart(target: str) -> Optional[dict]:
                         best_score = w_sim
                         best_match_idx = idx
 
-        if best_match_idx >= 0:
+        if best_match_idx >= 0 and best_score >= 0.50:
             removed = selected.pop(best_match_idx)
-        elif len(selected) == 1:
-            # If only 1 item in cart and user asked to remove
-            removed = selected.pop(0)
 
     if removed:
         log_cart_action("REMOVE", removed["name"], removed["quantity"], get_cart_total())
@@ -295,23 +267,49 @@ def get_smart_suggestions_for_item(product_id: str) -> List[dict]:
     return suggestions
 
 
-def check_ordinal_intent(text: str):
+def register_shown_items(items: List[dict]):
+    """
+    Stores an ordered snapshot of search results for positional voice commands ('add the 2nd one').
+    """
+    initialize_session_memory()
+    order = st.session_state.session_memory["order"]
+
+    snapshot = []
+    for idx, item in enumerate(items[:6], start=1):
+        snapshot.append({
+            "index": idx,
+            "product_id": str(item.get("product_id")),
+            "name": str(item.get("name", "")),
+            "category": str(item.get("category", "General")),
+            "unit": str(item.get("unit", "")),
+            "price": float(item.get("price", 0.0)),
+            "dietary_tags": str(item.get("dietary_tags", "")),
+            "description": str(item.get("description", "")),
+        })
+    order["last_recommendations"] = snapshot
+
+
+def check_ordinal_intent(text: str, parsed_intent=None):
     """
     Checks for ordinal words ('first', 'second', 'third', 'last', etc.)
     Returns (word_found, index_requested, item_matched_or_none, total_items_shown).
     """
     order = st.session_state.session_memory.get("order", {})
-    recs = order.get("last_suggested_items") or order.get("last_recommendations", [])
+    recs = order.get("last_recommendations") or order.get("last_suggested_items", [])
     lowered = text.lower()
+    ref = (parsed_intent.target_reference if parsed_intent and parsed_intent.target_reference else "").lower()
     
     for word, idx in ORDINAL_WORDS.items():
-        if re.search(rf"\b{re.escape(word)}\b", lowered):
+        if re.search(rf"\b{re.escape(word)}\b", lowered) or word == ref or str(idx) in ref:
             if idx == -1:
                 item = recs[-1] if recs else None
                 return word, len(recs), item, len(recs)
             if 1 <= idx <= len(recs):
                 return word, idx, recs[idx - 1], len(recs)
             else:
+                alt_recs = order.get("last_suggested_items", [])
+                if 1 <= idx <= len(alt_recs):
+                    return word, idx, alt_recs[idx - 1], len(alt_recs)
                 return word, idx, None, len(recs)
     return None, None, None, len(recs)
 
@@ -467,7 +465,7 @@ def update_state_from_user_message(user_query: str, parsed_intent=None) -> dict:
         }
 
     # 1. Check for Ordinal References ('add the second one', 'first item', 'I got it at the first item')
-    ord_word, ord_idx, ord_item, total_shown = check_ordinal_intent(user_query)
+    ord_word, ord_idx, ord_item, total_shown = check_ordinal_intent(user_query, parsed_intent=parsed_intent)
     if ord_word is not None and (action in (ACTION_ADD_TO_CART, ACTION_GENERAL) or any(w in q_lower for w in ["add", "put", "take", "want", "at", "get", "one", "item"])):
         if ord_item:
             res = add_item_to_cart(ord_item, quantity=1)

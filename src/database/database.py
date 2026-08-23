@@ -1,13 +1,16 @@
 # database.py
+import os
 import re
 import streamlit as st
 import chromadb
 from sentence_transformers import SentenceTransformer
 from rank_bm25 import BM25Okapi
-from data_pipeline import load_and_process_menu_data
-from interest_model import get_cached_encoder
+from src.database.data_pipeline import load_and_process_menu_data
+from src.core.interest_model import get_cached_encoder
 
-DATA_FILE_PATH = "grocery_shopping_catalog3.csv"
+DATA_FILE_PATH = os.path.join(os.path.dirname(__file__), "..", "..", "data", "grocery_shopping_catalog3.csv")
+if not os.path.exists(DATA_FILE_PATH):
+    DATA_FILE_PATH = "data/grocery_shopping_catalog3.csv"
 
 @st.cache_resource
 def initialize_services():
@@ -15,7 +18,7 @@ def initialize_services():
     try:
         df, analysis = load_and_process_menu_data(DATA_FILE_PATH)
     except FileNotFoundError:
-        st.error("CSV file not found. Please place 'grocery_shopping_catalog3.csv' in the same folder as app.py.")
+        st.error("CSV file not found. Please place 'grocery_shopping_catalog3.csv' in the 'data/' folder.")
         return None, None, None, None, None, None
     except Exception as e:
         st.error(f"Error loading data: {e}")

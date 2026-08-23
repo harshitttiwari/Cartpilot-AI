@@ -13,17 +13,26 @@ logging.getLogger("huggingface_hub").setLevel(logging.ERROR)
 logging.getLogger("transformers").setLevel(logging.ERROR)
 logging.getLogger("sentence_transformers").setLevel(logging.ERROR)
 
+import importlib
 import streamlit as st
 from dotenv import load_dotenv
-from database import initialize_services
-from bot_logic import initialize_llm
-from session_memory import initialize_session_memory
-import importlib
-import ui_components
-import voice_component
+
+import src.core.bot_logic as bot_logic
+import src.core.session_memory as session_memory
+import src.database.database as database
+import src.ui.ui_components as ui_components
+import src.ui.voice_component as voice_component
+
+importlib.reload(bot_logic)
+importlib.reload(session_memory)
+importlib.reload(database)
 importlib.reload(ui_components)
 importlib.reload(voice_component)
-from ui_components import render_chat_interface, render_analytics_sidebar, render_admin_panel
+
+from src.database.database import initialize_services
+from src.core.bot_logic import initialize_llm
+from src.core.session_memory import initialize_session_memory
+from src.ui.ui_components import render_chat_interface, render_analytics_sidebar, render_admin_panel
 
 st.set_page_config(
     page_title="Cartpilot Assistant",
@@ -183,8 +192,9 @@ st.markdown(
             word-break: normal;
         }
 
-        /* ── Single-Line Horizontal Chat Input ── */
+        /* ── Compact Single-Line Input with Absolute Centered Submit Button ── */
         div[data-testid="stChatInput"] {
+            position: relative !important;
             padding: 0 !important;
             margin: 0 auto !important;
             width: 80% !important;
@@ -194,53 +204,59 @@ st.markdown(
             display: flex !important;
             flex-direction: row !important;
             align-items: center !important;
-            justify-content: space-between !important;
-            min-height: 42px !important;
-            height: 42px !important;
-            max-height: 42px !important;
-            padding: 4px 10px !important;
-            border-radius: 20px !important;
+            position: relative !important;
+            height: 44px !important;
+            min-height: 44px !important;
+            max-height: 44px !important;
+            padding: 0 46px 0 16px !important;
+            border-radius: 22px !important;
             box-sizing: border-box !important;
-            overflow: hidden !important;
+            overflow: visible !important;
         }
+        div[data-testid="stChatInput"] [data-baseweb="base-input"],
+        div[data-testid="stChatInput"] [data-baseweb="textarea"],
         div[data-testid="stChatInput"] > div > div:first-child {
             flex: 1 1 auto !important;
             display: flex !important;
             align-items: center !important;
-            width: 100% !important;
+            height: 100% !important;
+            max-height: 100% !important;
+            padding: 0 !important;
+            margin: 0 !important;
+            border: none !important;
+            background: transparent !important;
+            box-shadow: none !important;
         }
         div[data-testid="stChatInput"] textarea,
         textarea[data-testid="stChatInputTextArea"] {
             flex: 1 !important;
             width: 100% !important;
-            min-height: 26px !important;
             height: 26px !important;
+            min-height: 26px !important;
             max-height: 26px !important;
-            padding: 2px 6px !important;
-            font-size: 0.90rem !important;
-            line-height: 22px !important;
-            resize: none !important;
+            line-height: 26px !important;
+            font-size: 0.92rem !important;
+            padding: 0 !important;
+            margin: 0 !important;
             border: none !important;
             background: transparent !important;
             box-shadow: none !important;
-            margin: 0 !important;
+            resize: none !important;
+            overflow-x: auto !important;
+            overflow-y: hidden !important;
+            white-space: pre !important;
+            box-sizing: border-box !important;
         }
         div[data-testid="stChatInput"] [data-testid="stChatInputInstructions"],
         div[data-testid="stChatInput"] small,
         div[data-testid="stChatInput"] > div > div:nth-child(2):not(:last-child) {
             display: none !important;
         }
-        div[data-testid="stChatInput"] > div > div:last-child {
-            display: inline-flex !important;
-            align-items: center !important;
-            justify-content: center !important;
-            width: auto !important;
-            height: auto !important;
-            margin: 0 0 0 6px !important;
-            padding: 0 !important;
-            flex-shrink: 0 !important;
-        }
         button[data-testid="stChatInputSubmitButton"] {
+            position: absolute !important;
+            right: 8px !important;
+            top: 50% !important;
+            transform: translateY(-50%) !important;
             height: 30px !important;
             width: 30px !important;
             min-height: 30px !important;
@@ -253,9 +269,10 @@ st.markdown(
             color: white !important;
             margin: 0 !important;
             padding: 0 !important;
-            display: inline-flex !important;
+            display: flex !important;
             align-items: center !important;
             justify-content: center !important;
+            z-index: 10 !important;
         }
 
         /* ── Sidebar — Refined ── */

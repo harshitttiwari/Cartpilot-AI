@@ -8,7 +8,7 @@ import streamlit as st
 from pydantic import BaseModel, Field
 from google import genai
 from groq import Groq
-from log import log_llm_provider, log_llm_failover, log_intent_parsed, log_interest_score
+from src.core.log import log_llm_provider, log_llm_failover, log_intent_parsed, log_interest_score
 
 
 # ---------------------------------------------------------------------------
@@ -196,9 +196,10 @@ Return a JSON object matching this schema:
 
 Conversational Reasoning & STT Acoustic Correction Rules:
 1. "ADD_TO_CART": User wants to add, buy, or restock items.
-   - English: "Add milk", "I need 2 apples", "Put bread and eggs on my list", "Running low on butter", "add both", "add it", "add second one".
+   - Multi-Item Splitting: If multiple items are requested (e.g. "add two box of pasta and tomato sauce", "milk, eggs, and bread"), ALWAYS split EVERY single product into its own separate object in the "items" array: `[{{"item_name": "pasta", "quantity": 2}}, {{"item_name": "tomato sauce", "quantity": 1}}]`. NEVER place the full sentence into item_name.
+   - Clean Commodity Nouns: Always clean item_name to the food item itself ("apple" not "two apples", "pasta" not "two box of pasta", "butter" not "to packet of butter").
+   - STT Acoustic Numbers: "to packet of butter" -> quantity: 2, item_name: "butter"; "add to whole milk" -> quantity: 2, item_name: "whole milk"; "add for apples" -> quantity: 4, item_name: "apple"; "two apples" -> quantity: 2, item_name: "apple".
    - Hindi/Hinglish: "2 packet doodh aur bread add karo", "Mujhe paneer chahiye", "Chai patti aur cheeni khatam ho gayi hai".
-   - STT Acoustic Numbers: "add to whole milk" -> quantity: 2, item_name: "whole milk"; "add for apples" -> quantity: 4.
 2. Self-Corrections & Mind Changes:
    - If the user starts saying an item but corrects themselves in the same sentence (e.g. "at 5 apples wait actually make that 3 green apples and also drop bananas"), IGNORE the retracted item ("5 apples") and ONLY extract the final corrected items (3 green apples, 1 bunch bananas) into "items".
 3. Compound Add + Remove Commands:

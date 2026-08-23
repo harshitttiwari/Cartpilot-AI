@@ -1,12 +1,13 @@
 # ui_components.py
+import re
 import streamlit as st
 import time
 from datetime import datetime
-from bot_logic import get_ai_response, calculate_interest_score, parse_intent_with_llm
-from voice_component import render_voice_controller, render_tts_speaker
-from database import DATA_FILE_PATH
-from log import log_embedding_generated, log_vector_search, log_voice_command
-from session_memory import (
+from src.core.bot_logic import get_ai_response, calculate_interest_score, parse_intent_with_llm
+from src.ui.voice_component import render_voice_controller, render_tts_speaker
+from src.database.database import DATA_FILE_PATH
+from src.core.log import log_embedding_generated, log_vector_search, log_voice_command
+from src.core.session_memory import (
     build_memory_context,
     build_order_confirmation_message,
     extract_allergen_restrictions,
@@ -16,6 +17,7 @@ from session_memory import (
     sync_shown_items_from_response,
     update_state_from_user_message,
     add_item_to_cart,
+    remove_item_from_cart,
     get_cart_by_aisles,
     get_cart_total,
     get_cart_items_count,
@@ -150,9 +152,19 @@ def render_chat_interface(container):
                         s_results = _hybrid_search(item_name, top_k=3, parsed_intent=parsed_intent)
                         if s_results and s_results.get("metadatas") and s_results["metadatas"][0]:
                             best_match = s_results["metadatas"][0][0]
-                            dist = s_results["distances"][0][0] if s_results.get("distances") else 0.0
-                            # Stricter relevance cutoff: prevent matching unrelated products
-                            if dist <= 0.62:
+                            dist = s_results["distances"][0][0] if s_results.get("distances") else 1.0
+                            
+                            # Check token / keyword presence in product name or category
+                            q_words = set(re.findall(r"\b\w{3,}\b", item_name.lower()))
+                            prod_words = set(re.findall(r"\b\w{3,}\b", f"{best_match.get('name', '')} {best_match.get('category', '')}".lower()))
+                            # Also check singular/plural prefix matching (e.g. apple in apples)
+                            has_direct_match = any(
+                                any(qw in pw or pw in qw for pw in prod_words)
+                                for qw in q_words
+                            ) if q_words else False
+
+                            # Accept if direct keyword match exists OR semantic distance is confident (dist <= 0.74)
+                            if has_direct_match or dist <= 0.74:
                                 res = add_item_to_cart(best_match, quantity=qty)
                                 added_summaries.append(f"**{qty}x {best_match['name']}** ({best_match.get('unit', '')})")
                                 all_suggestions.extend(res.get("smart_suggestions", []))
@@ -280,7 +292,18 @@ def _hybrid_search(prompt, top_k=10, parsed_intent=None):
         include=["metadatas", "distances"],
     )
 
-    bm25_scores = st.session_state.bm25.get_scores(prompt.lower().split())
+    # Expand singular/plural search tokens for BM25 (e.g. 'egg' -> 'eggs', 'apples' -> 'apple')
+    search_tokens = []
+    for tok in prompt.lower().split():
+        clean_tok = re.sub(r"[^\w]", "", tok)
+        if clean_tok:
+            search_tokens.append(clean_tok)
+            if clean_tok.endswith("s") and len(clean_tok) > 3:
+                search_tokens.append(clean_tok[:-1])
+            else:
+                search_tokens.append(clean_tok + "s")
+
+    bm25_scores = st.session_state.bm25.get_scores(search_tokens if search_tokens else prompt.lower().split())
     bm25_ranked = sorted(enumerate(bm25_scores), key=lambda item: item[1], reverse=True)[:top_k]
 
     combined = {}

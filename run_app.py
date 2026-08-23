@@ -26,7 +26,7 @@ print("=" * 70)
 # Step 1: Launch FastAPI Backend Server on Port 8000
 print("\n[1/2] Launching FastAPI REST Backend (http://127.0.0.1:8000)...")
 fastapi_proc = subprocess.Popen(
-    [python_exe, "-m", "uvicorn", "api:app", "--host", "127.0.0.1", "--port", "8000"],
+    [python_exe, "-m", "uvicorn", "src.api.api:app", "--host", "127.0.0.1", "--port", "8000"],
     cwd=project_root
 )
 
