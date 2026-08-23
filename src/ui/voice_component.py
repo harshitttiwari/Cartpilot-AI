@@ -1,5 +1,6 @@
 # voice_component.py
 import re
+import unicodedata
 import warnings
 import streamlit as st
 import streamlit.components.v1 as components
@@ -240,19 +241,71 @@ def _safe_html_render(html_content: str, height: int = 0):
         components.html(html_content, height=height)
 
 
+def sanitize_text_for_speech(text: str) -> str:
+    """
+    Sanitizes raw AI response text for natural-sounding Text-to-Speech:
+    - Strips all Unicode emojis, pictographs, dingbats, and variation selectors.
+    - Strips markdown formatting (headers, bold, italics, links, backticks, bullets).
+    - Replaces harsh punctuation (;, :, |) with natural pause commas.
+    - Removes ASCII emoticons and redundant symbols.
+    """
+    if not text:
+        return ""
+
+    t = str(text)
+
+    # 1. Remove Markdown URLs and Links [text](url) -> text, and raw http urls
+    t = re.sub(r"\[([^\]]+)\]\([^)]+\)", r"\1", t)
+    t = re.sub(r"https?://\S+", "", t)
+
+    # 2. Remove code blocks and inline code backticks
+    t = re.sub(r"```[\s\S]*?```", "", t)
+    t = re.sub(r"`([^`]+)`", r"\1", t)
+
+    # 3. Replace semicolons, colons, and pipes with natural pause commas or spaces
+    t = re.sub(r";", ", ", t)
+    t = re.sub(r"\s*:\s*", ", ", t)
+    t = re.sub(r"\|", ", ", t)
+
+    # 4. Remove common ASCII emoticons (e.g., :), :D, :-), ;), <3)
+    t = re.sub(r"(?:\s|^)(?:[:;=8][\-o\*\']?[)\]\(\[dDpP/\:\}\{@\|\\]|<3)(?:\s|$)", " ", t)
+
+    # 5. Remove Markdown markers (#, *, _, ~, >, `) and list bullets (-, •, +)
+    t = re.sub(r"^[#\s\*\->•–+]+", "", t, flags=re.MULTILINE)
+    t = re.sub(r"[\*\_~`#>•–—]", " ", t)
+
+    # 6. Filter out all Unicode emojis, symbols, and dingbats using unicodedata
+    clean_chars = []
+    for char in t:
+        cat = unicodedata.category(char)
+        # Keep letters (L*), numbers (N*), spaces (Z*), and standard spoken punctuation
+        if cat.startswith(("L", "N", "Z")) or char in " .,?!$%-":
+            clean_chars.append(char)
+        else:
+            clean_chars.append(" ")
+    t = "".join(clean_chars)
+
+    # 7. Clean up multiple punctuation and normalize spaces
+    t = re.sub(r"\s*,\s*", ", ", t)
+    t = re.sub(r",(\s*,)+", ",", t)
+    t = re.sub(r"\s*\.\s*", ". ", t)
+    t = re.sub(r"\.(\s*\.)+", ".", t)
+    t = re.sub(r"\s+", " ", t).strip()
+
+    return t
+
+
 def render_tts_speaker(text_to_speak: str):
     """
     Speaks the assistant's confirmation and smart suggestions aloud using browser Text-to-Speech.
-    Automatically strips markdown markup, links, and emojis for natural pronunciation.
+    Automatically strips markdown markup, links, emojis, and punctuation names for natural pronunciation.
     """
     if not text_to_speak or not st.session_state.get("tts_enabled", True):
         return
 
-    # Clean text of markdown bullet points, bold markers, emojis, and code backticks
-    clean_text = re.sub(r"[*_`#~]", "", str(text_to_speak))
-    clean_text = re.sub(r"\[(.*?)\]\(.*?\)", r"\1", clean_text)  # Strip markdown links
-    clean_text = re.sub(r"[🤖👤🛒💡🔊🎙️•\-–]", " ", clean_text)    # Strip common UI symbols
-    clean_text = re.sub(r"\s+", " ", clean_text).strip()
+    clean_text = sanitize_text_for_speech(text_to_speak)
+    if not clean_text:
+        return
     
     # Escape quotes and backslashes for safe JavaScript injection
     js_safe_text = clean_text.replace("\\", "\\\\").replace('"', '\\"').replace("'", "\\'")
