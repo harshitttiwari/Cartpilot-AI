@@ -36,34 +36,71 @@ st.markdown(
             overflow: hidden !important;
         }
 
-        /* Hide Streamlit top toolbar and footer, but keep sidebar control visible */
-        #MainMenu, footer, .stDeployButton {
+        /* Hide deploy toolbar, hamburger menu, and footer completely */
+        #MainMenu, footer, .stDeployButton, [data-testid="stToolbar"], [data-testid="stAppDeployButton"] {
             display: none !important;
             visibility: hidden !important;
         }
 
+        /* Keep header container transparent */
         header[data-testid="stHeader"] {
             background: transparent !important;
-            color: white !important;
-            z-index: 99999 !important;
-            height: 2.2rem !important;
+            height: auto !important;
+            min-height: 0 !important;
+            padding: 0 !important;
+            z-index: 999999 !important;
         }
 
-        /* Ensure the sidebar reopen button (chevron icon) is clearly visible and clickable */
-        [data-testid="stSidebarCollapsedControl"] {
+        /* Beautiful Floating Sidebar Toggle Button (Open / Reopen) */
+        [data-testid="stSidebarCollapsedControl"],
+        [data-testid="stSidebarCollapseButton"],
+        [data-testid="collapsedControl"] {
             display: flex !important;
             visibility: visible !important;
-            color: #ffffff !important;
-            background: rgba(255, 255, 255, 0.08) !important;
+            opacity: 1 !important;
+            position: fixed !important;
+            top: 10px !important;
+            left: 12px !important;
+            z-index: 1000000 !important;
+            background: rgba(25, 29, 38, 0.9) !important;
+            backdrop-filter: blur(10px) !important;
+            border: 1px solid rgba(255, 255, 255, 0.15) !important;
             border-radius: 8px !important;
-            padding: 4px !important;
-            margin-top: 4px !important;
-            margin-left: 6px !important;
-            transition: all 0.2s ease !important;
-            z-index: 100000 !important;
+            box-shadow: 0 4px 14px rgba(0, 0, 0, 0.35) !important;
+            padding: 4px 6px !important;
+            cursor: pointer !important;
+            transition: all 0.2s ease-in-out !important;
         }
-        [data-testid="stSidebarCollapsedControl"]:hover {
+
+        [data-testid="stSidebarCollapsedControl"] button,
+        [data-testid="stSidebarCollapseButton"] button {
+            background: transparent !important;
+            border: none !important;
+            color: #ffffff !important;
+            display: flex !important;
+            align-items: center !important;
+            justify-content: center !important;
+            padding: 2px !important;
+        }
+
+        [data-testid="stSidebarCollapsedControl"] svg,
+        [data-testid="stSidebarCollapseButton"] svg {
+            fill: #ffffff !important;
+            color: #ffffff !important;
+            width: 18px !important;
+            height: 18px !important;
+        }
+
+        [data-testid="stSidebarCollapsedControl"]:hover,
+        [data-testid="stSidebarCollapseButton"]:hover {
             background: rgba(255, 75, 75, 0.25) !important;
+            border-color: rgba(255, 75, 75, 0.5) !important;
+            transform: scale(1.05) !important;
+        }
+
+        [data-testid="stSidebarCollapsedControl"]:hover svg,
+        [data-testid="stSidebarCollapseButton"]:hover svg {
+            fill: #FF4B4B !important;
             color: #FF4B4B !important;
         }
 
