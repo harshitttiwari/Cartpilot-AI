@@ -331,7 +331,7 @@ def _clean_response(response: str) -> str:
     return response.strip()
 
 
-from interest_model import predict_intent
+from src.core.interest_model import predict_intent
 
 
 def calculate_interest_score(user_input: str, current_score: int, resolved_action=None, search_shown=False) -> int:
