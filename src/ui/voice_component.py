@@ -57,7 +57,7 @@ def render_voice_controller():
         with ctrl_col3:
             st.markdown("<div style='text-align:right;padding-top:4px;'><span style='color:#00e676;font-size:0.8rem;font-weight:600;'>🟢 Mic Ready</span></div>", unsafe_allow_html=True)
 
-        # Web Speech API Controller Component
+        # Web Speech API Controller Component with Instant Speech Interruption
         mic_component_html = f"""
         <!DOCTYPE html>
         <html>
@@ -69,7 +69,7 @@ def render_voice_controller():
                     background: transparent;
                     display: flex;
                     align-items: center;
-                    gap: 12px;
+                    gap: 10px;
                     padding: 2px 0;
                 }}
                 .mic-button {{
@@ -77,25 +77,46 @@ def render_voice_controller():
                     color: white;
                     border: none;
                     border-radius: 20px;
-                    padding: 6px 16px;
-                    font-size: 12.5px;
+                    padding: 6px 15px;
+                    font-size: 12px;
                     font-weight: 600;
                     cursor: pointer;
                     display: inline-flex;
                     align-items: center;
-                    gap: 6px;
-                    box-shadow: 0 2px 10px rgba(255, 75, 75, 0.3);
+                    gap: 5px;
+                    box-shadow: 0 2px 8px rgba(255, 75, 75, 0.3);
                     transition: all 0.2s ease;
                     outline: none;
                 }}
                 .mic-button:hover {{
                     transform: translateY(-1px);
-                    box-shadow: 0 4px 14px rgba(255, 75, 75, 0.45);
+                    box-shadow: 0 4px 12px rgba(255, 75, 75, 0.45);
                 }}
                 .mic-button.listening {{
                     background: linear-gradient(135deg, #e74c3c 0%, #c0392b 100%);
                     animation: pulse 1.5s infinite;
                     box-shadow: 0 0 16px rgba(231, 76, 60, 0.8);
+                }}
+                .stop-button {{
+                    background: rgba(255, 255, 255, 0.08);
+                    color: #E0E0E0;
+                    border: 1px solid rgba(255, 255, 255, 0.15);
+                    border-radius: 20px;
+                    padding: 6px 13px;
+                    font-size: 12px;
+                    font-weight: 600;
+                    cursor: pointer;
+                    display: inline-flex;
+                    align-items: center;
+                    gap: 5px;
+                    transition: all 0.2s ease;
+                    outline: none;
+                }}
+                .stop-button:hover {{
+                    background: rgba(255, 75, 75, 0.2);
+                    border-color: #FF4B4B;
+                    color: #FF4B4B;
+                    transform: translateY(-1px);
                 }}
                 @keyframes pulse {{
                     0% {{ transform: scale(1); }}
@@ -124,18 +145,40 @@ def render_voice_controller():
             </style>
         </head>
         <body>
-            <button id="micBtn" class="mic-button" onclick="handleMicClick()">
+            <button id="micBtn" class="mic-button" onclick="handleMicClick()" title="Start Speaking">
                 <span id="micIcon">🎙️</span>
                 <span id="btnText">Speak</span>
             </button>
+            <button id="stopBtn" class="stop-button" onclick="handleStopClick()" title="Interrupt / Stop AI Speech">
+                <span>⏹️</span>
+                <span>Stop Voice</span>
+            </button>
             <div class="status-badge">
                 <span id="recDot" class="recording-indicator"></span>
-                <span id="statusLabel">Click mic or type grocery commands</span>
+                <span id="statusLabel">Click mic or type commands</span>
             </div>
 
             <script>
                 let recognition = null;
                 let isListening = false;
+
+                function stopAllSpeech() {{
+                    try {{
+                        if ('speechSynthesis' in window) {{
+                            window.speechSynthesis.cancel();
+                        }}
+                        if (window.parent && 'speechSynthesis' in window.parent) {{
+                            window.parent.speechSynthesis.cancel();
+                        }}
+                    }} catch(e) {{}}
+                }}
+
+                function handleStopClick() {{
+                    stopAllSpeech();
+                    const lbl = document.getElementById('statusLabel');
+                    if (lbl) lbl.innerText = 'Voice stopped';
+                }}
+
                 if ('SpeechRecognition' in window || 'webkitSpeechRecognition' in window) {{
                     const SpeechRecognitionClass = window.SpeechRecognition || window.webkitSpeechRecognition;
                     recognition = new SpeechRecognitionClass();
@@ -210,11 +253,13 @@ def render_voice_controller():
 
                 function resetMicUI() {{
                     document.getElementById('micBtn').classList.remove('listening');
-                    document.getElementById('btnText').innerText = 'Speak Command';
+                    document.getElementById('btnText').innerText = 'Speak';
                     document.getElementById('recDot').style.display = 'none';
                 }}
 
                 function handleMicClick() {{
+                    // Auto-interrupt any active speech when user initiates microphone
+                    stopAllSpeech();
                     if (!recognition) return;
                     if (isListening) {{
                         recognition.stop();
@@ -227,6 +272,17 @@ def render_voice_controller():
                         }}
                     }}
                 }}
+
+                // Automatically cancel speech when user interacts with chat input
+                try {{
+                    if (window.parent) {{
+                        window.parent.addEventListener('keydown', function(e) {{
+                            if (e.target && (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA')) {{
+                                stopAllSpeech();
+                            }}
+                        }});
+                    }}
+                }} catch(e) {{}}
             </script>
         </body>
         </html>
@@ -318,14 +374,19 @@ def render_tts_speaker(text_to_speak: str):
     <html>
     <body>
         <script>
-            if ('speechSynthesis' in window) {{
-                window.speechSynthesis.cancel(); // Stop any pending speech
+            try {{
+                if ('speechSynthesis' in window) {{
+                    window.speechSynthesis.cancel();
+                }}
+                if (window.parent && 'speechSynthesis' in window.parent) {{
+                    window.parent.speechSynthesis.cancel();
+                }}
                 const utterance = new SpeechSynthesisUtterance("{js_safe_text}");
                 utterance.lang = "{tts_lang}";
                 utterance.rate = 1.05;
                 utterance.pitch = 1.0;
                 window.speechSynthesis.speak(utterance);
-            }}
+            }} catch(e) {{}}
         </script>
     </body>
     </html>
