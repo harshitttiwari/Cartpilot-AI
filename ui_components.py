@@ -122,33 +122,65 @@ def render_chat_interface(container):
                 match_score = 1.0
                 search_results = None
 
-                # Handle Multi-Item Voice Addition
+                # Handle Multi-Item Voice Addition & Compound Add/Remove
                 if action_type == "ADD_TO_CART" and not resolved_action.get("cart_changed"):
+                    # Process any simultaneous removals first
+                    removed_summaries = []
+                    if parsed_intent and parsed_intent.remove_items:
+                        for rem_target in parsed_intent.remove_items:
+                            rem_res = remove_item_from_cart(rem_target)
+                            if rem_res:
+                                removed_summaries.append(rem_res["name"])
+
                     items_to_add = parsed_intent.items
-                    if not items_to_add:
+                    if not items_to_add and not removed_summaries:
                         # Single query fallback
                         items_to_add = [{"item_name": parsed_intent.cleaned_search_query or prompt, "quantity": 1}]
 
                     added_summaries = []
+                    missing_items = []
                     all_suggestions = []
 
                     for it in items_to_add:
                         item_name = it.item_name if hasattr(it, "item_name") else it.get("item_name", "")
                         qty = it.quantity if hasattr(it, "quantity") else it.get("quantity", 1)
+                        if not item_name or not item_name.strip():
+                            continue
                         
                         s_results = _hybrid_search(item_name, top_k=3, parsed_intent=parsed_intent)
                         if s_results and s_results.get("metadatas") and s_results["metadatas"][0]:
                             best_match = s_results["metadatas"][0][0]
-                            res = add_item_to_cart(best_match, quantity=qty)
-                            added_summaries.append(f"**{qty}x {best_match['name']}** ({best_match.get('unit', '')})")
-                            all_suggestions.extend(res.get("smart_suggestions", []))
-                            register_shown_items(s_results["metadatas"][0])
+                            dist = s_results["distances"][0][0] if s_results.get("distances") else 0.0
+                            # Stricter relevance cutoff: prevent matching unrelated products
+                            if dist <= 0.62:
+                                res = add_item_to_cart(best_match, quantity=qty)
+                                added_summaries.append(f"**{qty}x {best_match['name']}** ({best_match.get('unit', '')})")
+                                all_suggestions.extend(res.get("smart_suggestions", []))
+                                register_shown_items(s_results["metadatas"][0])
+                            else:
+                                missing_items.append(item_name)
+                        else:
+                            missing_items.append(item_name)
+
+                    total = get_cart_total()
+                    total_count = get_cart_items_count()
+                    parts = []
+
+                    if removed_summaries:
+                        rem_str = ", ".join(f"**{r}**" for r in removed_summaries)
+                        parts.append(f"🗑️ Removed {rem_str} from your shopping list.")
 
                     if added_summaries:
-                        total = get_cart_total()
-                        total_count = get_cart_items_count()
                         items_str = ", ".join(added_summaries)
-                        response = f"🛒 Added {items_str} to your shopping list! (Subtotal: **\\${total:.2f}**)"
+                        parts.append(f"🛒 Added {items_str} to your shopping list! (Subtotal: **\\${total:.2f}**)")
+                        top_match = added_summaries[0]
+                    
+                    if missing_items:
+                        miss_str = ", ".join(f"**{m}**" for m in missing_items)
+                        parts.append(f"ℹ️ Currently, {miss_str} is not available in our store catalog.")
+
+                    if parts:
+                        response = "\n\n".join(parts)
                         
                         # If user also said "and checkout" / "place order", finalize immediately!
                         if any(w in prompt.lower() for w in ["checkout", "check out", "place order", "order now", "order kar do", "final order"]):
@@ -168,8 +200,6 @@ def render_chat_interface(container):
                             sug_items = [f"**{s['name']}** (\\${s['price']:.2f})" for s in unique_sug[:2]]
                             sug_text = " or ".join(sug_items)
                             response += f"\n\n💡 **Smart Suggestion**: Shoppers frequently also add {sug_text}. Say *\"add both\"* or *\"add it\"* to include them!"
-                        
-                        top_match = added_summaries[0]
                     else:
                         response = f"I searched the catalog for '{prompt}' but couldn't locate matching items. Try asking for basic essentials like milk, bread, eggs, apples, or snacks."
 

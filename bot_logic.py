@@ -147,6 +147,7 @@ class ItemSpec(BaseModel):
 class ParsedUserIntent(BaseModel):
     action: Literal["ADD_TO_CART", "REMOVE_ITEM", "VIEW_MENU", "VIEW_CART", "CLEAR_CART", "CHECKOUT", "GENERAL"] = "GENERAL"
     items: List[ItemSpec] = Field(default_factory=list)
+    remove_items: List[str] = Field(default_factory=list)
     dietary_preferences: List[str] = Field(default_factory=list)
     category_preference: Optional[str] = None
     target_reference: Optional[str] = None
@@ -182,6 +183,7 @@ Return a JSON object matching this schema:
   "items": [
     {{"item_name": "standard English commodity name", "quantity": 1, "unit_hint": null}}
   ],
+  "remove_items": ["item names to remove from current cart if requested"],
   "dietary_preferences": [strings like "gluten_free", "vegan", "vegetarian", "keto_friendly", "organic", "sugar_free", "lactose_free"],
   "category_preference": string or null ("Produce", "Dairy & Eggs", "Bakery", "Pantry & Staples", "Beverages & Snacks"),
   "target_reference": string or null ("first", "second", "third", "both", "it", "that"),
@@ -197,14 +199,19 @@ Conversational Reasoning & STT Acoustic Correction Rules:
    - English: "Add milk", "I need 2 apples", "Put bread and eggs on my list", "Running low on butter", "add both", "add it", "add second one".
    - Hindi/Hinglish: "2 packet doodh aur bread add karo", "Mujhe paneer chahiye", "Chai patti aur cheeni khatam ho gayi hai".
    - STT Acoustic Numbers: "add to whole milk" -> quantity: 2, item_name: "whole milk"; "add for apples" -> quantity: 4.
-2. "REMOVE_ITEM": User wants to remove, delete, or cancel an item.
-   - Contextual Removal: If the user says "remove grief from my card", "Reebok ghee", "delete key", or "remove that", match against CURRENT CART CONTEXT and set "cleaned_search_query" to the exact matching cart item name (e.g. "MorningDew Ghee" or "ghee").
-   - Confirmation: If the user says "yes remove", "yes", "remove it", "sure hata do", set action: "REMOVE_ITEM" with target_reference: "it" and "cleaned_search_query" set to the item being confirmed.
-3. "CLEAR_CART": User wants to empty or clear list ("Clear my cart", "Empty list", "Sab saaf kar do", "Cart se sab hata do").
-4. "VIEW_CART": User asks to see their cart ("Show my list", "What is in my cart?", "Show my updated card", "Mera cart dikhao").
-5. "CHECKOUT": User wants to finalize or place order ("Checkout", "Place order", "Order now", "Pay", "place order now").
-6. "VIEW_MENU": Browsing or discovering ("Show organic fruits", "Show vegan snacks and green tea").
-7. "GENERAL": Greetings or general conversation.
+2. Self-Corrections & Mind Changes:
+   - If the user starts saying an item but corrects themselves in the same sentence (e.g. "at 5 apples wait actually make that 3 green apples and also drop bananas"), IGNORE the retracted item ("5 apples") and ONLY extract the final corrected items (3 green apples, 1 bunch bananas) into "items".
+3. Compound Add + Remove Commands:
+   - If the user asks to remove one item AND add another (e.g. "take the milk out of my cart... but add two packet of butter"):
+     Set "action": "ADD_TO_CART", "items": [{{"item_name": "butter", "quantity": 2}}], "remove_items": ["milk"].
+4. "REMOVE_ITEM": User wants to remove, delete, or cancel an item.
+   - Contextual Removal: If the user says "remove milk from my card", match against CURRENT CART CONTEXT and set "cleaned_search_query" to the exact matching cart item name.
+   - Confirmation: If the user says "yes remove", "yes", "remove it", "sure hata do", set action: "REMOVE_ITEM" with target_reference: "it".
+5. "CLEAR_CART": User wants to empty or clear list ("Clear my cart", "Empty list", "cancel my order", "Sab saaf kar do", "Cart se sab hata do").
+6. "VIEW_CART": User asks to see their cart ("Show my list", "What is in my cart?", "Show my updated card", "Mera cart dikhao").
+7. "CHECKOUT": User wants to finalize or place order ("Checkout", "Place order", "Order now", "Pay", "place order now").
+8. "VIEW_MENU": Browsing or discovering ("Show organic fruits", "Show vegan snacks and green tea").
+9. "GENERAL": Greetings, cooking advice, questions ("What is the best way to keep avocados from turning brown?"). If user is asking a general question, DO NOT extract items into "items" unless they explicitly ask to add/buy them.
 
 Translation:
 - Translate Hindi/Hinglish food items to standard English (doodh -> milk, chai patti -> tea, cheeni -> sugar, tamatar -> tomato, pyaj -> onion, atta -> flour, chawal -> rice, kela -> banana, seb -> apple).

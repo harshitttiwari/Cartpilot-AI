@@ -301,7 +301,7 @@ def check_ordinal_intent(text: str):
     Returns (word_found, index_requested, item_matched_or_none, total_items_shown).
     """
     order = st.session_state.session_memory.get("order", {})
-    recs = order.get("last_recommendations", [])
+    recs = order.get("last_suggested_items") or order.get("last_recommendations", [])
     lowered = text.lower()
     
     for word, idx in ORDINAL_WORDS.items():
