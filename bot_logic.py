@@ -170,7 +170,7 @@ def parse_intent_with_llm(llm, user_text: str, current_cart_items: Optional[List
         cart_summary = ", ".join(f"{it.get('quantity', 1)}x {it.get('name', '')}" for it in current_cart_items)
 
     prompt = f"""
-You are an intelligent NLP Parser and Conversational Reasoner for a Voice Command Shopping Assistant.
+You are an intelligent NLP Parser and Conversational Reasoner for Cartpilot Assistant.
 Analyze the user's voice message with awareness of their current shopping list:
 
 CURRENT CART CONTEXT:
@@ -262,7 +262,7 @@ def get_ai_response(llm, user_input, chat_history, context, memory_context=""):
     )
 
     prompt = f"""
-You are FoodieBot, an intelligent and friendly Voice Shopping Assistant & Supermarket Concierge.
+You are Cartpilot Assistant, an intelligent and friendly Voice Shopping Assistant & Supermarket Concierge.
 Your goal is to help users manage their grocery shopping lists, discover items, and provide smart recipe & pairing suggestions.
 
 Guidelines:
@@ -284,7 +284,7 @@ CONVERSATION HISTORY (Last 6 turns):
 USER MESSAGE:
 {user_input}
 
-Respond as FoodieBot:
+Respond as Cartpilot Assistant:
 """
     try:
         response = llm.invoke(prompt)

@@ -94,12 +94,13 @@ def render_chat_interface(container):
         render_voice_controller()
 
         # 2. Scrollable Chat History Container (Fills viewport cleanly)
-        chat_history_container = st.container(height=480)
+        chat_history_container = st.container(height=450)
         with chat_history_container:
             for msg in st.session_state.chat_history[-50:]:
                 avatar_icon = "🤖" if msg["role"] == "assistant" else "👤"
                 with st.chat_message(msg["role"], avatar=avatar_icon):
-                    st.markdown(msg["content"])
+                    role_marker = f"<span class='role-marker-{msg['role']}' style='display:none'></span>"
+                    st.markdown(role_marker + msg["content"], unsafe_allow_html=True)
 
         # 3. Chat Input Box (Voice injects directly here)
         if prompt := st.chat_input("Speak or type grocery commands..."):

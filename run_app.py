@@ -1,6 +1,6 @@
 # run_app.py
 """
-FoodieBot Master Application Launcher (100% Pure Python)
+Cartpilot-ai Master Application Launcher (100% Pure Python)
 Launches both the FastAPI REST Backend (port 8000) and the Streamlit Web UI (port 8501)
 together in one command: python run_app.py
 """
@@ -50,7 +50,7 @@ try:
 except KeyboardInterrupt:
     print("\nReceived shutdown signal...")
 finally:
-    print("Shutting down FoodieBot servers...")
+    print("Shutting down CartPilot AI servers...")
     for proc in (fastapi_proc, streamlit_proc):
         if proc and proc.poll() is None:
             proc.terminate()

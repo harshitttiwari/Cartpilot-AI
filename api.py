@@ -1,9 +1,4 @@
 # api.py
-"""
-Voice Command Shopping Assistant REST API Backend (FastAPI - Pure Python)
-Exposes REST endpoints for chat, grocery catalog queries, and system health checks.
-Automatic Interactive Swagger Documentation available at: http://localhost:8000/docs
-"""
 
 import time
 from typing import List, Optional, Dict, Any
