@@ -4,7 +4,6 @@ import sys
 import logging
 import warnings
 
-# Suppress HuggingFace Hub, Tokenizers, and PyTorch console warnings & progress bars
 os.environ["HF_HUB_DISABLE_PROGRESS_BARS"] = "1"
 os.environ["HF_HUB_DISABLE_SYMLINKS_WARNING"] = "1"
 os.environ["TOKENIZERS_PARALLELISM"] = "false"
@@ -37,13 +36,35 @@ st.markdown(
             overflow: hidden !important;
         }
 
-        /* Hide Streamlit top header & toolbar completely */
-        #MainMenu, footer, .stDeployButton, header[data-testid="stHeader"] {
+        /* Hide Streamlit top toolbar and footer, but keep sidebar control visible */
+        #MainMenu, footer, .stDeployButton {
             display: none !important;
-            height: 0 !important;
-            min-height: 0 !important;
-            padding: 0 !important;
-            margin: 0 !important;
+            visibility: hidden !important;
+        }
+
+        header[data-testid="stHeader"] {
+            background: transparent !important;
+            color: white !important;
+            z-index: 99999 !important;
+            height: 2.2rem !important;
+        }
+
+        /* Ensure the sidebar reopen button (chevron icon) is clearly visible and clickable */
+        [data-testid="stSidebarCollapsedControl"] {
+            display: flex !important;
+            visibility: visible !important;
+            color: #ffffff !important;
+            background: rgba(255, 255, 255, 0.08) !important;
+            border-radius: 8px !important;
+            padding: 4px !important;
+            margin-top: 4px !important;
+            margin-left: 6px !important;
+            transition: all 0.2s ease !important;
+            z-index: 100000 !important;
+        }
+        [data-testid="stSidebarCollapsedControl"]:hover {
+            background: rgba(255, 75, 75, 0.25) !important;
+            color: #FF4B4B !important;
         }
 
         /* ── Layout & Container ── */
