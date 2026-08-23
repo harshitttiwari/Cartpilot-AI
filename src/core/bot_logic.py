@@ -22,10 +22,21 @@ def initialize_llm():
     Primary: Gemini (google-genai)
     Fallback: Groq llama-3.3-70b-versatile (on 429 / quota errors)
     """
-    gemini_key = os.getenv("GEMINI_API_KEY")
-    groq_key = os.getenv("GROQ_API_KEY")
-    model_name = os.getenv("GEMINI_MODEL", "gemini-2.5-flash-lite")
-    groq_model = os.getenv("GROQ_MODEL", "llama-3.3-70b-versatile")
+    def _get_secret_or_env(key: str, default=None):
+        val = os.getenv(key)
+        if val:
+            return val
+        try:
+            if hasattr(st, "secrets") and key in st.secrets:
+                return st.secrets[key]
+        except Exception:
+            pass
+        return default
+
+    gemini_key = _get_secret_or_env("GEMINI_API_KEY")
+    groq_key = _get_secret_or_env("GROQ_API_KEY")
+    model_name = _get_secret_or_env("GEMINI_MODEL", "gemini-2.5-flash-lite")
+    groq_model = _get_secret_or_env("GROQ_MODEL", "llama-3.3-70b-versatile")
 
     gemini_client = None    
     groq_client = None
